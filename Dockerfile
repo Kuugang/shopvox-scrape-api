@@ -1,22 +1,20 @@
-FROM python:3.11-slim
+FROM mcr.microsoft.com/playwright/python:v1.50.0-noble
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PORT=8000 \
-    PW_CDP_URL=http://host.docker.internal:9222
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PLAYWRIGHT_BROWSERS_PATH=0
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt ./
 
-COPY shopvox_scrape_api.py /app/shopvox_scrape_api.py
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]" python-dotenv playwright
+RUN python -m playwright install --with-deps chromium
 
+COPY . ./
+
+ENV PORT=8000
 EXPOSE 8000
-
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
-  CMD curl -fsS "http://127.0.0.1:${PORT}/" >/dev/null || exit 1
-
-CMD ["sh", "-lc", "python -m uvicorn shopvox_scrape_api:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "hypercorn main:app --bind 0.0.0.0:${PORT:-8000}"]
