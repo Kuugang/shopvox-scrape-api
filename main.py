@@ -1,18 +1,21 @@
 import asyncio
 import datetime
 import os
+import re
 import tempfile
-from typing import Union
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Dict, Union
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from playwright.async_api import BrowserContext
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Playwright
 from playwright.async_api import TimeoutError as PWTimeout
 from playwright.async_api import async_playwright
-from pydantic import BaseModel
+
+from schemas import JobFilters, JobFiltersModel, MfaBodyModel
 
 load_dotenv()
 
@@ -25,11 +28,15 @@ TIMEOUT_MS_DEFAULT = int(os.getenv("SHOPVOX_TIMEOUT_MS", "15000"))
 USER_DATA_DIR = os.getenv("PW_USER_DATA_DIR", "./profile")
 HEADLESS = os.getenv("PW_HEADLESS", "true").lower() != "false"
 
-# ----- App & singletons
-# We initialize Playwright and the persistent context ONCE via FastAPI lifespan.
 _pw: Playwright | None = None
 _ctx: BrowserContext | None = None
 _lock = asyncio.Lock()
+
+
+SALES_REP_LINKS: Dict[str, str] = {
+    "colby": "jobs?view=b36878a1-bdda-4eed-94ab-e42b60ac7e15",
+    "courtney": "jobs?view=d2f04e58-5605-43ef-997c-4bc2b78db50f",
+}
 
 
 def _require_creds():
@@ -70,7 +77,6 @@ async def _init_playwright_and_context():
 
 async def _shutdown_playwright():
     global _pw, _ctx
-    # Close context first, then stop Playwright
     if _ctx is not None:
         try:
             await _ctx.close()
@@ -92,12 +98,12 @@ async def get_ctx() -> BrowserContext:
     """
     if _ctx is None:
         await _init_playwright_and_context()
-    # pyright/mypy hint; at runtime _ctx is set by now
     assert _ctx is not None
     return _ctx
 
 
-async def lifespan(app: FastAPI):
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await _init_playwright_and_context()
     try:
         yield
@@ -108,16 +114,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ShopVox Scrape API", version="1", lifespan=lifespan)
 
 
-# ----- Schemas
-class MfaBodyModel(BaseModel):
-    code: str
-    trust_device: bool = True
-    timeout_ms: int = TIMEOUT_MS_DEFAULT
-
-
 # ===== Routes =====
-
-
 @app.post("/login")
 async def login():
     """
@@ -313,12 +310,87 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
         return {"error": f"Unexpected error: {str(e)}"}
 
 
+async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
+    try:
+        ctx = await get_ctx()
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        page.on("popup", lambda p: asyncio.create_task(p.close()))
+
+        sales_rep = filters.get("sales_rep")
+        rep_link = None
+
+        if sales_rep:
+            key = sales_rep.strip().lower()
+            rep_link = SALES_REP_LINKS.get(key)
+            if rep_link is None:
+                return {
+                    "error": f"Unknown sales_rep '{sales_rep}'. "
+                    f"Allowed: {', '.join(SALES_REP_LINKS.keys())}"
+                }
+
+            await page.goto(URL_SHOPVOX + "/" + rep_link)
+        await page.locator("span:has-text('Jobs')").wait_for(state="visible")
+        await page.wait_for_timeout(4000)
+
+        rows_count_text = await page.locator("p.css-ifbqr7").inner_text()
+
+        m = re.search(r"(\d[\d,]*)", rows_count_text)
+        rows_count = int(m.group(1).replace(",", "")) if m else None
+
+        if rows_count == 0:
+            return {"error": f"no rows found"}
+
+        await page.locator("button.css-obi7n2").click()
+        await page.locator("div.display-b.textDecoration-n.cursor-p.text-black").nth(
+            1
+        ).click()
+
+        async with page.expect_download() as download_info:
+            await page.locator("button.css-xdirqf").click()
+        download = await download_info.value
+
+        tmp_dir = tempfile.gettempdir()
+        pdf_path = os.path.join(tmp_dir, download.suggested_filename)
+        await download.save_as(pdf_path)
+
+        return pdf_path
+
+    except PlaywrightError as e:
+        return {"error": f"Playwright error: {str(e)}"}
+    except Exception as e:
+        return {"error": f"Unexpected error: {str(e)}"}
+
+
 @app.get("/overdue-jobs")
 async def get_overdue_jobs(background_tasks: BackgroundTasks):
     """
     Trigger the automation, return the PDF file, and clean it up afterward.
     """
     result = await fetch_overdue_jobs()
+
+    if isinstance(result, dict):
+        return JSONResponse(content=result, status_code=500)
+
+    pdf_path: str = result
+    background_tasks.add_task(safe_remove, pdf_path)
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename=os.path.basename(pdf_path),
+        background=background_tasks,
+    )
+
+
+@app.get("/pending-jobs")
+async def get_pending_jobs(
+    background_tasks: BackgroundTasks,
+    filters_model: JobFiltersModel = Depends(),
+):
+    filters: JobFilters = {}
+    if filters_model.sales_rep is not None:
+        filters["sales_rep"] = filters_model.sales_rep
+
+    result = await fetch_pending_jobs(filters)
 
     if isinstance(result, dict):
         return JSONResponse(content=result, status_code=500)
