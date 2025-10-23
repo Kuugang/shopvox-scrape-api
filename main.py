@@ -53,7 +53,7 @@ def safe_remove(path: str):
         if os.path.exists(path):
             os.remove(path)
     except Exception as e:
-        print(f"⚠️ Cleanup failed for {path}: {e}")
+        print(f"Cleanup failed for {path}: {e}")
 
 
 async def _init_playwright_and_context():
@@ -278,22 +278,30 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
       - str: path to saved PDF on success
       - dict: {"error": "..."} on failure
     """
+
+    ctx = await get_ctx()
+    page = await ctx.new_page()
+    page.on("popup", lambda p: asyncio.create_task(p.close()))
+
     try:
-        ctx = await get_ctx()
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        page.on("popup", lambda p: asyncio.create_task(p.close()))
 
         await page.goto(URL_SHOPVOX + "/jobs?view=f60b58c5-eb32-461b-9fed-05d6ac6d9ce3")
         await page.locator("span:has-text('Jobs')").wait_for(state="visible")
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(10000)
 
-        # UI flow (adjust selectors to match current UI)
+        rows_count_text = await page.locator("p.css-ifbqr7").inner_text()
+        m = re.search(r"(\d[\d,]*)", rows_count_text)
+        rows_count = int(m.group(1).replace(",", "")) if m else None
+
+        if rows_count == 0:
+            await page.close()
+            return ""
+
         await page.locator("button.css-obi7n2").click()
         await page.locator("div.display-b.textDecoration-n.cursor-p.text-black").nth(
             1
         ).click()
 
-        # Capture the download
         async with page.expect_download() as download_info:
             await page.locator("button.css-xdirqf").click()
         download = await download_info.value
@@ -301,20 +309,26 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
         tmp_dir = tempfile.gettempdir()
         pdf_path = os.path.join(tmp_dir, download.suggested_filename)
         await download.save_as(pdf_path)
+        await page.close()
 
         return pdf_path
 
     except PlaywrightError as e:
+        await page.close()
+
         return {"error": f"Playwright error: {str(e)}"}
     except Exception as e:
+        await page.close()
+
         return {"error": f"Unexpected error: {str(e)}"}
 
 
 async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
+    ctx = await get_ctx()
+    page = await ctx.new_page()
+    page.on("popup", lambda p: asyncio.create_task(p.close()))
+
     try:
-        ctx = await get_ctx()
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        page.on("popup", lambda p: asyncio.create_task(p.close()))
 
         sales_rep = filters.get("sales_rep")
         rep_link = None
@@ -330,15 +344,15 @@ async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
 
             await page.goto(URL_SHOPVOX + "/" + rep_link)
         await page.locator("span:has-text('Jobs')").wait_for(state="visible")
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(10000)
 
         rows_count_text = await page.locator("p.css-ifbqr7").inner_text()
-
         m = re.search(r"(\d[\d,]*)", rows_count_text)
         rows_count = int(m.group(1).replace(",", "")) if m else None
 
         if rows_count == 0:
-            return {"error": f"no rows found"}
+            await page.close()
+            return ""
 
         await page.locator("button.css-obi7n2").click()
         await page.locator("div.display-b.textDecoration-n.cursor-p.text-black").nth(
@@ -352,12 +366,17 @@ async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
         tmp_dir = tempfile.gettempdir()
         pdf_path = os.path.join(tmp_dir, download.suggested_filename)
         await download.save_as(pdf_path)
+        await page.close()
 
         return pdf_path
 
     except PlaywrightError as e:
+        await page.close()
+
         return {"error": f"Playwright error: {str(e)}"}
     except Exception as e:
+        await page.close()
+
         return {"error": f"Unexpected error: {str(e)}"}
 
 
@@ -373,6 +392,10 @@ async def get_overdue_jobs(background_tasks: BackgroundTasks):
 
     pdf_path: str = result
     background_tasks.add_task(safe_remove, pdf_path)
+
+    if pdf_path == "":
+        return JSONResponse(content={"message": "no rows found"}, status_code=204)
+
     return FileResponse(
         pdf_path,
         media_type="application/pdf",
@@ -396,6 +419,9 @@ async def get_pending_jobs(
         return JSONResponse(content=result, status_code=500)
 
     pdf_path: str = result
+    if pdf_path == "":
+        return JSONResponse(content={"message": "no rows found"}, status_code=204)
+
     background_tasks.add_task(safe_remove, pdf_path)
     return FileResponse(
         pdf_path,
