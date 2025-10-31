@@ -127,6 +127,12 @@ def safe_remove(path: str):
         print(f"Cleanup failed for {path}: {e}")
 
 
+CHROME_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
 async def _init_playwright_and_context():
     """
     Internal: start Playwright and create a persistent context exactly once.
@@ -139,10 +145,15 @@ async def _init_playwright_and_context():
             _ctx = await _pw.chromium.launch_persistent_context(
                 user_data_dir=USER_DATA_DIR,
                 headless=HEADLESS,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                ],
+                # args=[
+                #     "--no-sandbox",
+                #     "--disable-dev-shm-usage",
+                # ],
+                channel="chrome",
+                viewport={"width": 1366, "height": 900},
+                locale="en-US",
+                timezone_id="America/Chicago",
+                user_agent=CHROME_UA,
             )
 
 
@@ -330,10 +341,14 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
 
         has_custom = False
 
+        await page.set_viewport_size({"width": 1366, "height": 900})
+        await page.context.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
         processed_any = bool(processed_items) 
         async with sem:
             try:
                 for store_key, group in by_store.items():
+
+
                     processor = STORE_PROCESSORS.get(store_key)
                     home = STORE_HOMES.get(store_key)
 

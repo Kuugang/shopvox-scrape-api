@@ -11,7 +11,8 @@ COPY requirements.txt ./
 
 RUN pip install -r requirements.txt
 
-RUN python -m playwright install --with-deps chromium
+# RUN python -m playwright install --with-deps chromium
+RUN python -m playwright install --with-deps chrome
 
 COPY . ./
 

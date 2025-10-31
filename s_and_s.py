@@ -110,6 +110,7 @@ async def _fill_sizes_across_warehouses(
 
 
 async def process_item(page: Page, item: Item) -> Tuple[bool, List[str]]:
+
     await search_item(page, item)
     await page.wait_for_load_state("load")
 
@@ -133,6 +134,10 @@ async def process_item(page: Page, item: Item) -> Tuple[bool, List[str]]:
 
 
 async def accept_cookies(page: Page):
+
+    await page.set_viewport_size({"width": 1366, "height": 900})
+    await page.context.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
+
     await page.goto(URL_S_AND_S)
     await page.wait_for_load_state("load")
 
@@ -142,6 +147,10 @@ async def accept_cookies(page: Page):
 
 
 async def login(page: Page):
+
+    await page.set_viewport_size({"width": 1366, "height": 900})
+    await page.context.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
+
     await page.goto(URL_S_AND_S + "/myaccount/login")
     await page.locator("input#M_M_zEmailTB").fill(S_AND_S_USERNAME)
     await page.locator("input#M_M_zPasswordTB").fill(S_AND_S_PASSWORD)
