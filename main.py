@@ -322,14 +322,15 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
         for it in order.items:
             by_store.setdefault(_normalize_store(it.store), []).append(it)
 
-        sanmar_key = "sanmar"
-        s_and_s_key = "s&s activewear"
+        # sanmar_key = "sanmar"
+        # s_and_s_key = "s&s activewear"
+        #
+        # sanmar_items = by_store.get(sanmar_key, [])
+        # s_and_s_items = by_store.get(s_and_s_key, [])
 
-        sanmar_items = by_store.get(sanmar_key, [])
-        s_and_s_items = by_store.get(s_and_s_key, [])
+        has_custom = False
 
-        other_items = [it for k, group in by_store.items() if k != sanmar_key for it in group]
-
+        processed_any = bool(processed_items) 
         async with sem:
             try:
                 for store_key, group in by_store.items():
@@ -341,17 +342,20 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
 
                     if processor:
                         for it in group:
-                            await processor(page, it)
-                            processed_items.append({"part": it.part, "color": it.color })
+                            if _normalize_store(it.store) == "custom":
+                                skipped_custom.append(
+                                    {"part": it.part, "color": it.color, "store": it.store}
+                                )
+                                continue
 
-                for item in other_items:
-                    skipped_custom.append(
-                        {
-                            "part": item.part,
-                            "color": item.color,
-                            "store": item.store,
-                        }
-                    )
+                            added_any, oos_sizes = await processor(page, it)
+
+                            if oos_sizes:
+                                all_out_of_stock[it.part] = oos_sizes
+                            if added_any:
+                                any_added_overall = True
+
+                            processed_items.append({"part": it.part, "color": it.color })
 
             finally:
                 if page:
@@ -359,14 +363,18 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
 
         has_oos = bool(all_out_of_stock)
         has_custom = bool(skipped_custom)
-        processed_sanmar = bool(processed_items)
 
-        if not processed_sanmar and has_custom:
+        # print("Processed Any: ", processed_any)
+        # print("Has Custom: ", has_custom)
+        # print("Has OOS: ", has_oos)
+        # print("Any Added Overall: ", any_added_overall)
+
+        if not processed_any and has_custom:
             status = "custom_store_only"
-            base_msg = f"Order contains only non-SanMar items; none processed. Skipped: {skipped_custom}"
-        elif processed_sanmar and not any_added_overall and has_oos:
-            status = "out_of_stock"
-            base_msg = f"All requested sizes for SanMar items are out of stock: {all_out_of_stock}"
+            base_msg = (
+                f"Order contains only custom store items; none processed. "
+                f"Skipped: {skipped_custom}"
+            )
         elif has_oos and any_added_overall:
             status = "partial"
             base_msg = f"Some items were out of stock: {all_out_of_stock}"
@@ -1167,6 +1175,22 @@ async def login_ss():
     return JSONResponse(
         content={
             "message": "Successfully logged in",
+        },
+        status_code=200,
+    )
+
+
+@app.get("/ss/accept-cookies")
+async def ss_accept_cookies():
+    
+    ctx = await get_ctx()
+    page = await ctx.new_page()
+    await s_and_s.accept_cookies(page)
+    await page.close()
+
+    return JSONResponse(
+        content={
+            "message": "Accepted cookies",
         },
         status_code=200,
     )

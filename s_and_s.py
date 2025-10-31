@@ -129,9 +129,12 @@ async def process_item(page: Page, item: Item) -> Tuple[bool, List[str]]:
                 await add_btn.scroll_into_view_if_needed()
                 await add_btn.click()
 
-    await page.wait_for_timeout(10000)
-    await page.wait_for_timeout(10000)
     return any_added, oos
+
+
+async def accept_cookies(page: Page):
+    await page.goto(URL_S_AND_S)
+    await page.locator("button#onetrust-accept-btn-handler").click()
 
 
 async def login(page: Page):
