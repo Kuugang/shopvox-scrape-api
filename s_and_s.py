@@ -134,6 +134,10 @@ async def process_item(page: Page, item: Item) -> Tuple[bool, List[str]]:
 
 async def accept_cookies(page: Page):
     await page.goto(URL_S_AND_S)
+    await page.wait_for_load_state("load")
+
+    html = await page.content()
+    print(html)
     await page.locator("button#onetrust-accept-btn-handler").click()
 
 
