@@ -4,8 +4,17 @@ import os
 import re
 import tempfile
 from contextlib import asynccontextmanager
-from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, List,
-                    Optional, Tuple, Union)
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
@@ -18,7 +27,7 @@ from playwright.async_api import async_playwright
 
 import s_and_s
 import sanmar
-from helpers import close_page, require_env
+from helpers import _close_page, _safe_remove, require_env
 from schemas import Item, JobFilters, JobFiltersModel, MfaBodyModel, SalesOrder
 
 load_dotenv()
@@ -29,8 +38,6 @@ URL_SHOPVOX = "https://express.shopvox.com"
 SHOPVOX_EMAIL = require_env("SHOPVOX_EMAIL")
 SHOPVOX_PASSWORD = require_env("SHOPVOX_PASSWORD")
 
-SANMAR_USERNAME = require_env("SANMAR_USERNAME")
-SANMAR_PASSWORD = require_env("SANMAR_PASSWORD")
 
 USER_DATA_DIR = require_env("PW_USER_DATA_DIR")
 HEADLESS = require_env("PW_HEADLESS").lower() != "false"
@@ -138,15 +145,6 @@ async def _safe_input_value(locator, timeout: int = 250) -> Optional[str]:
 
 def _normalize_store(s: Optional[str]) -> str:
     return (s or "").strip().casefold()
-
-
-def safe_remove(path: str):
-    """Safely remove temp file if it exists."""
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-    except Exception as e:
-        print(f"Cleanup failed for {path}: {e}")
 
 
 CHROME_UA = (
@@ -324,7 +322,7 @@ async def clean_not_order_yet_tags(
             await page.wait_for_load_state("load")
             await tag_cleanup_on_order_page(page)
 
-            await close_page(page)
+            await _close_page(page)
 
     sem = asyncio.Semaphore(max_concurrency)
     tasks = [asyncio.create_task(run_one(i, o, sem)) for i, o in enumerate(orders)]
@@ -405,7 +403,7 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
 
             finally:
                 if page:
-                    await close_page(page)
+                    await _close_page(page)
 
         has_oos = bool(all_out_of_stock)
         has_custom = bool(skipped_custom)
@@ -781,7 +779,7 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
         rows_count = int(m.group(1).replace(",", "")) if m else None
 
         if rows_count == 0:
-            await close_page(page)
+            await _close_page(page)
             return ""
 
         await page.locator("button.css-obi7n2").click()
@@ -796,16 +794,16 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
         tmp_dir = tempfile.gettempdir()
         pdf_path = os.path.join(tmp_dir, download.suggested_filename)
         await download.save_as(pdf_path)
-        await close_page(page)
+        await _close_page(page)
 
         return pdf_path
 
     except PlaywrightError as e:
-        await close_page(page)
+        await _close_page(page)
 
         return {"error": f"Playwright error: {str(e)}"}
     except Exception as e:
-        await close_page(page)
+        await _close_page(page)
 
         return {"error": f"Unexpected error: {str(e)}"}
 
@@ -838,7 +836,7 @@ async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
         rows_count = int(m.group(1).replace(",", "")) if m else None
 
         if rows_count == 0:
-            await close_page(page)
+            await _close_page(page)
             return ""
 
         await page.locator("button.css-obi7n2").click()
@@ -853,16 +851,16 @@ async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
         tmp_dir = tempfile.gettempdir()
         pdf_path = os.path.join(tmp_dir, download.suggested_filename)
         await download.save_as(pdf_path)
-        await close_page(page)
+        await _close_page(page)
 
         return pdf_path
 
     except PlaywrightError as e:
-        await close_page(page)
+        await _close_page(page)
 
         return {"error": f"Playwright error: {str(e)}"}
     except Exception as e:
-        await close_page(page)
+        await _close_page(page)
 
         return {"error": f"Unexpected error: {str(e)}"}
 
@@ -888,15 +886,15 @@ async def fetch_to_order_so():
         ]
 
         result = await get_so_details_parallel(page, so_urls)
-        await close_page(page)
+        await _close_page(page)
         return result
 
     except PlaywrightError as e:
-        await close_page(page)
+        await _close_page(page)
 
         return {"error": f"Playwright error: {str(e)}"}
     except Exception as e:
-        await close_page(page)
+        await _close_page(page)
 
         return {"error": f"Unexpected error: {str(e)}"}
 
@@ -1067,7 +1065,7 @@ async def get_overdue_jobs(background_tasks: BackgroundTasks):
         return JSONResponse(content=result, status_code=500)
 
     pdf_path: str = result
-    background_tasks.add_task(safe_remove, pdf_path)
+    background_tasks.add_task(_safe_remove, pdf_path)
 
     if pdf_path == "":
         return JSONResponse(content={"message": "no rows found"}, status_code=204)
@@ -1098,7 +1096,7 @@ async def get_pending_jobs(
     if pdf_path == "":
         return JSONResponse(content={"message": "no rows found"}, status_code=204)
 
-    background_tasks.add_task(safe_remove, pdf_path)
+    background_tasks.add_task(_safe_remove, pdf_path)
     return FileResponse(
         pdf_path,
         media_type="application/pdf",
@@ -1109,35 +1107,17 @@ async def get_pending_jobs(
 
 @app.get("/login/sanmar")
 async def login_sanmar():
-    try:
-        ctx = await get_ctx()
-        page = await ctx.new_page()
-        page.on("popup", lambda p: asyncio.create_task(p.close()))
+    ctx = await get_ctx()
+    page = await ctx.new_page()
 
-        await page.goto(URL_SANMAR, wait_until="domcontentloaded")
+    await sanmar.login(page)
 
-        await page.fill("#username", SANMAR_USERNAME)
-        await page.fill("#password", SANMAR_PASSWORD)
-        await page.locator("input.form-check-input").click()
-
-        await page.locator(
-            "button.btn-df.btn-primary-df.btn-sm-df.text-nowrap.d-none.d-lg-inline-block"
-        ).click()
-
-        await page.wait_for_load_state("networkidle")
-        await close_page(page)
-
-        return JSONResponse(
-            content={
-                "message": "Successfully logged in",
-            },
-            status_code=200,
-        )
-
-    except PlaywrightError as e:
-        raise HTTPException(status_code=500, detail=f"Playwright error: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+    return JSONResponse(
+        content={
+            "message": "Successfully logged in",
+        },
+        status_code=200,
+    )
 
 
 @app.get("/login/ss")
@@ -1145,7 +1125,7 @@ async def login_ss():
     ctx = await get_ctx()
     page = await ctx.new_page()
     await s_and_s.login(page)
-    await close_page(page)
+    await _close_page(page)
 
     return JSONResponse(
         content={
@@ -1161,7 +1141,7 @@ async def ss_accept_cookies():
     ctx = await get_ctx()
     page = await ctx.new_page()
     await s_and_s.accept_cookies(page)
-    await close_page(page)
+    await _close_page(page)
 
     return JSONResponse(
         content={
@@ -1198,7 +1178,8 @@ async def update_so_tag(orders: List[str]):
 async def sanmar_get_active_order_status():
     ctx = await get_ctx()
     page = await ctx.new_page()
-    await sanmar.get_active_order_status(page)
+    result = await sanmar.get_active_order_status(page)
+    return JSONResponse(content={"result": result}, status_code=200)
 
 
 @app.get("/")

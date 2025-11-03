@@ -1,17 +1,29 @@
 import asyncio
 import re
-from typing import Dict, List, Optional, Tuple, Union
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from urllib.parse import parse_qs, urlencode, urlparse, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 from playwright.async_api import BrowserContext, Frame, Locator, Page
 from playwright.async_api import TimeoutError as PWTimeoutError
 from playwright.async_api import expect
 
-from helpers import _click_and_wait_domcontent, close_page
+from helpers import (
+    _as_list,
+    _as_mapping,
+    _clean,
+    _click_and_wait_domcontent,
+    _close_page,
+    _safe_str,
+    require_env,
+)
 from schemas import Item, SizeItem
 
 load_dotenv()
+
+
+SANMAR_USERNAME = require_env("SANMAR_USERNAME")
+SANMAR_PASSWORD = require_env("SANMAR_PASSWORD")
 
 URL_SANMAR = "https://sanmar.com/"
 ACTIVE_ORDERS_URL = URL_SANMAR + "mysanmar/sales-orders/active-orders#"
@@ -29,6 +41,23 @@ UPS_SEL = {
     "ship_to_country": "#stApp_txtCountry",
     "received_by": "#stApp_valReceivedBy",
 }
+
+
+async def login(page: Page):
+    page.on("popup", lambda p: asyncio.create_task(p.close()))
+    await page.goto(URL_SANMAR, wait_until="domcontentloaded")
+    await page.wait_for_load_state("load")
+
+    await page.fill("#username", SANMAR_USERNAME)
+    await page.fill("#password", SANMAR_PASSWORD)
+    await page.locator("input.form-check-input").click()
+
+    await page.locator(
+        "button.btn-df.btn-primary-df.btn-sm-df.text-nowrap.d-none.d-lg-inline-block"
+    ).click()
+
+    await page.wait_for_load_state("networkidle")
+    await _close_page(page)
 
 
 async def process_item(page: Page, item: Item) -> Tuple[bool, List[str]]:
@@ -292,7 +321,7 @@ async def get_active_order_status(page: Page):
         "#sales-order-table tbody tr.orders-separator", timeout=30000
     )
     results = await open_all_orders_in_parallel(
-        page, max_concurrency=4, track_max_concurrency=2
+        page, max_concurrency=5, track_max_concurrency=2
     )
 
     print(f"[get_active_order_status] results: {results}")
@@ -306,6 +335,94 @@ def build_order_url(order_no: str) -> str:
         "orderStatus": "sanmarShipped",
     }
     return f"{ORDER_DETAILS_BASE}?{urlencode(params)}"
+
+
+def tracking_from_url(tracking_url: str) -> str | None:
+    try:
+        q = parse_qs(urlparse(tracking_url).query)
+        val = (q.get("tracknum") or [None])[0]
+        return val.split("/")[0] if val else None
+    except Exception:
+        return None
+
+
+async def _extract_order_shipments(page: Page) -> dict[str, dict]:
+    try:
+        content = page.locator("#shipped-items-content")
+        header = page.locator("#shipped-items-header")
+        cls = await content.get_attribute("class") or ""
+        if "show" not in cls and await header.count():
+            await header.click()
+            await content.wait_for(state="visible", timeout=5000)
+    except Exception:
+        pass
+
+    shipments: dict[str, dict] = {}
+    sections = page.locator("#shipped-items-content div.mt-3.hidden-xs")
+    for i in range(await sections.count()):
+        sec = sections.nth(i)
+
+        # tracking anchor (header right side)
+        track_a = sec.locator('.row.pt-2.pb-3 a[href*="track"]').first
+        href = await track_a.get_attribute("href") if await track_a.count() else None
+        tn = _clean(await track_a.inner_text()) if await track_a.count() else None
+
+        # normalize tn from url if anchor text is weird
+        tn = tn or (tracking_from_url(href or "") or None)
+        if not tn:
+            continue
+
+        # rows with items: use the known row class for line rows
+        # header row has 'fw-bold'; footer total row has an <h2>; we select typical line rows instead
+        line_rows = sec.locator("table tbody tr.border-bottom-lite-gray.height-60")
+
+        lines = []
+        for r in range(await line_rows.count()):
+            row = line_rows.nth(r)
+            # skip footer total rows that include an <h2>
+            if await row.locator("h2").count():
+                continue
+
+            tds = row.locator("td")
+            if await tds.count() < 7:
+                continue
+
+            # columns (by observed structure):
+            # [0] spacer, [1] style cell (contains <a> with style code), [2] Color, [3] Size,
+            # [4] Quantity, [5] Price Per Item, [6] Total Amount
+            style = _clean(await row.locator("td:nth-child(2) a").first.inner_text())
+            color = _clean(await row.locator("td:nth-child(3)").first.inner_text())
+            size = _clean(await row.locator("td:nth-child(4)").first.inner_text())
+            qty_s = _clean(await row.locator("td:nth-child(5)").first.inner_text())
+            ppi = _clean(await row.locator("td:nth-child(6)").first.inner_text())
+            total = _clean(await row.locator("td:nth-child(7)").first.inner_text())
+
+            # clean color to drop any swatch text preceding the color name
+            # (often it's "<img ...> ColorName")
+            if " " in color:
+                # after image, color text is usually after a space
+                color = color.split()[-len(color.split()) :]
+                color = " ".join(color)
+            # quantity to int if possible
+            try:
+                qty = int(qty_s.replace(",", ""))
+            except Exception:
+                qty = None
+
+            lines.append(
+                {
+                    "style": style,  # Style #
+                    "color": color,  # Color
+                    "size": size,  # Size
+                    "quantity": qty,  # Quantity
+                    "price_each": ppi,  # Price Per Item
+                    "line_total": total,  # Total Amount
+                }
+            )
+
+        shipments[tn] = {"href": href, "lines": lines}
+
+    return shipments
 
 
 async def _find_ups_context(page: Page) -> Union[Page, Frame]:
@@ -430,14 +547,13 @@ async def _open_tracking_tab(context: BrowserContext, href: str, order_no: str):
                 await _dismiss_ups_banners(p)
 
                 ctx = await _find_ups_context(p)
-
                 details = await _parse_ups_tracking(ctx)
                 return {
                     "order": order_no,
                     "tracking_url": url,
                     "details": details,
                 }
-            except Exception as e:
+            except Exception:
                 if attempt < UPS_MAX_RETRIES - 1:
                     await asyncio.sleep(
                         UPS_BACKOFFS[min(attempt, len(UPS_BACKOFFS) - 1)]
@@ -445,7 +561,7 @@ async def _open_tracking_tab(context: BrowserContext, href: str, order_no: str):
                     continue
     finally:
         try:
-            await close_page(page)
+            await _close_page(p)
         except Exception:
             pass
 
@@ -456,8 +572,9 @@ async def _open_all_tracking_for_order(
     order_no: str,
     track_max_concurrency: int | None = None,
 ):
-    tracking_links = page.locator('#shipped-items-content a[href*="track"]')
+    shipments_by_tn = await _extract_order_shipments(page)
 
+    tracking_links = page.locator('#shipped-items-content a[href*="track"]')
     try:
         header = page.locator("#shipped-items-header")
         if await header.is_visible():
@@ -480,6 +597,7 @@ async def _open_all_tracking_for_order(
         if href:
             hrefs.add(href)
 
+    # open all UPS tabs in parallel (with optional semaphore)
     if track_max_concurrency and track_max_concurrency > 0:
         sem = asyncio.Semaphore(track_max_concurrency)
 
@@ -493,7 +611,34 @@ async def _open_all_tracking_for_order(
             asyncio.create_task(_open_tracking_tab(context, u, order_no)) for u in hrefs
         ]
 
-    return await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks)
+
+    enriched: List[Dict[str, Any]] = []
+
+    for r in results or []:
+        r_map: Mapping[str, Any] = _as_mapping(r)
+        details: Mapping[str, Any] = _as_mapping(r_map.get("details"))
+
+        tracking_url = _safe_str(r_map.get("tracking_url"))
+        tn = (
+            _safe_str(details.get("tracking_number"))
+            or tracking_from_url(tracking_url)
+            or ""
+        )
+
+        items = _as_mapping(shipments_by_tn.get(tn, {})).get("lines")
+        items_list: List[Mapping[str, Any]] = _as_list(items)
+
+        enriched.append(
+            {
+                "order": r_map.get("order"),
+                "tracking_url": tracking_url or None,
+                "details": dict(details),
+                "items": items_list,
+            }
+        )
+
+    return enriched
 
 
 async def _open_order_in_new_tab(
@@ -514,7 +659,6 @@ async def _open_order_in_new_tab(
 
         return {
             "order": order_no,
-            "status": "opened",
             "tracking_results": tracking_results,
         }
     except Exception as e:
@@ -522,7 +666,7 @@ async def _open_order_in_new_tab(
     finally:
         # Close the order-details tab
         try:
-            await close_page(p)
+            await _close_page(p)
         except Exception:
             pass
 
