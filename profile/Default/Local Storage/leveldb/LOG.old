@@ -1,3 +1,18 @@
-2025/11/01-02:56:30.866 28801b Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/MANIFEST-000001
-2025/11/01-02:56:30.872 28801b Recovering log #8
-2025/11/01-02:56:30.873 28801b Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/000008.log 
+2025/11/04-01:25:19.469 12fbd8 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/MANIFEST-000001
+2025/11/04-01:25:19.473 12fbd8 Recovering log #33
+2025/11/04-01:25:19.474 12fbd8 Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/000033.log 
+2025/11/04-01:26:19.476 12fbda Level-0 table #37: started
+2025/11/04-01:26:19.478 12fbda Level-0 table #37: 37027 bytes OK
+2025/11/04-01:26:19.481 12fbda Delete type=0 #33
+2025/11/04-01:31:11.522 12fbda Level-0 table #39: started
+2025/11/04-01:31:11.525 12fbda Level-0 table #39: 34278 bytes OK
+2025/11/04-01:31:11.528 12fbda Delete type=0 #36
+2025/11/04-01:31:11.528 12fbda Compacting 4@0 + 1@1 files
+2025/11/04-01:31:11.531 12fbda Generated table #40@0: 114 keys, 51878 bytes
+2025/11/04-01:31:11.531 12fbda Compacted 4@0 + 1@1 files => 51878 bytes
+2025/11/04-01:31:11.533 12fbda compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/11/04-01:31:11.534 12fbda Delete type=2 #30
+2025/11/04-01:31:11.534 12fbda Delete type=2 #32
+2025/11/04-01:31:11.534 12fbda Delete type=2 #34
+2025/11/04-01:31:11.534 12fbda Delete type=2 #37
+2025/11/04-01:31:11.534 12fbda Delete type=2 #39

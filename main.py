@@ -4,17 +4,8 @@ import os
 import re
 import tempfile
 from contextlib import asynccontextmanager
-from typing import (
-    Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, List,
+                    Optional, Tuple, Union)
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
@@ -27,7 +18,7 @@ from playwright.async_api import async_playwright
 
 import s_and_s
 import sanmar
-from helpers import require_env
+from helpers import close_page, require_env
 from schemas import Item, JobFilters, JobFiltersModel, MfaBodyModel, SalesOrder
 
 load_dotenv()
@@ -333,7 +324,7 @@ async def clean_not_order_yet_tags(
             await page.wait_for_load_state("load")
             await tag_cleanup_on_order_page(page)
 
-            await page.close()
+            await close_page(page)
 
     sem = asyncio.Semaphore(max_concurrency)
     tasks = [asyncio.create_task(run_one(i, o, sem)) for i, o in enumerate(orders)]
@@ -414,7 +405,7 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
 
             finally:
                 if page:
-                    await page.close()
+                    await close_page(page)
 
         has_oos = bool(all_out_of_stock)
         has_custom = bool(skipped_custom)
@@ -790,7 +781,7 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
         rows_count = int(m.group(1).replace(",", "")) if m else None
 
         if rows_count == 0:
-            await page.close()
+            await close_page(page)
             return ""
 
         await page.locator("button.css-obi7n2").click()
@@ -805,16 +796,16 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
         tmp_dir = tempfile.gettempdir()
         pdf_path = os.path.join(tmp_dir, download.suggested_filename)
         await download.save_as(pdf_path)
-        await page.close()
+        await close_page(page)
 
         return pdf_path
 
     except PlaywrightError as e:
-        await page.close()
+        await close_page(page)
 
         return {"error": f"Playwright error: {str(e)}"}
     except Exception as e:
-        await page.close()
+        await close_page(page)
 
         return {"error": f"Unexpected error: {str(e)}"}
 
@@ -847,7 +838,7 @@ async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
         rows_count = int(m.group(1).replace(",", "")) if m else None
 
         if rows_count == 0:
-            await page.close()
+            await close_page(page)
             return ""
 
         await page.locator("button.css-obi7n2").click()
@@ -862,16 +853,16 @@ async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
         tmp_dir = tempfile.gettempdir()
         pdf_path = os.path.join(tmp_dir, download.suggested_filename)
         await download.save_as(pdf_path)
-        await page.close()
+        await close_page(page)
 
         return pdf_path
 
     except PlaywrightError as e:
-        await page.close()
+        await close_page(page)
 
         return {"error": f"Playwright error: {str(e)}"}
     except Exception as e:
-        await page.close()
+        await close_page(page)
 
         return {"error": f"Unexpected error: {str(e)}"}
 
@@ -897,15 +888,15 @@ async def fetch_to_order_so():
         ]
 
         result = await get_so_details_parallel(page, so_urls)
-        await page.close()
+        await close_page(page)
         return result
 
     except PlaywrightError as e:
-        await page.close()
+        await close_page(page)
 
         return {"error": f"Playwright error: {str(e)}"}
     except Exception as e:
-        await page.close()
+        await close_page(page)
 
         return {"error": f"Unexpected error: {str(e)}"}
 
@@ -1134,7 +1125,7 @@ async def login_sanmar():
         ).click()
 
         await page.wait_for_load_state("networkidle")
-        await page.close()
+        await close_page(page)
 
         return JSONResponse(
             content={
@@ -1154,7 +1145,7 @@ async def login_ss():
     ctx = await get_ctx()
     page = await ctx.new_page()
     await s_and_s.login(page)
-    await page.close()
+    await close_page(page)
 
     return JSONResponse(
         content={
@@ -1170,7 +1161,7 @@ async def ss_accept_cookies():
     ctx = await get_ctx()
     page = await ctx.new_page()
     await s_and_s.accept_cookies(page)
-    await page.close()
+    await close_page(page)
 
     return JSONResponse(
         content={
@@ -1199,10 +1190,17 @@ async def add_to_cart_r(orders: List[SalesOrder]):
 async def update_so_tag(orders: List[str]):
 
     ctx = await get_ctx()
-    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    page = await ctx.new_page()
 
     await clean_not_order_yet_tags(page, orders)
     return JSONResponse(content={"message": "Updated"}, status_code=200)
+
+
+@app.get("/sanmar/orders/status")
+async def sanmar_get_active_order_status():
+    ctx = await get_ctx()
+    page = await ctx.new_page()
+    await sanmar.get_active_order_status(page)
 
 
 @app.get("/")

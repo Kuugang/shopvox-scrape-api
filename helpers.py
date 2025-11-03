@@ -20,3 +20,15 @@ def require_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+async def close_page(page: Page):
+    try:
+        context = page.context
+        pages = context.pages
+        if len(pages) > 1:
+            await page.close()
+        else:
+            await page.bring_to_front()
+    except Exception:
+        pass

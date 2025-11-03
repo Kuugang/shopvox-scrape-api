@@ -1,3 +1,5 @@
-2025/11/01-02:52:26.477 283143 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/MANIFEST-000001
-2025/11/01-02:52:26.478 283143 Recovering log #3
-2025/11/01-02:52:26.478 283143 Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/000003.log 
+2025/11/04-01:32:55.901 1391b0 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/MANIFEST-000001
+2025/11/04-01:32:55.902 1391b0 Recovering log #22
+2025/11/04-01:32:55.903 1391b0 Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/000022.log 
+2025/11/04-01:37:00.371 1391b2 Level-0 table #26: started
+2025/11/04-01:37:00.375 1391b2 Level-0 table #26: 21416 bytes OK

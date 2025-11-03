@@ -1,15 +1,34 @@
+import asyncio
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple, Union
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
-from playwright.async_api import Locator, Page
+from playwright.async_api import BrowserContext, Frame, Locator, Page
+from playwright.async_api import TimeoutError as PWTimeoutError
+from playwright.async_api import expect
 
-from helpers import _click_and_wait_domcontent
+from helpers import _click_and_wait_domcontent, close_page
 from schemas import Item, SizeItem
 
 load_dotenv()
 
-URL_SANMAR = "https://sanmar.com"
+URL_SANMAR = "https://sanmar.com/"
+ACTIVE_ORDERS_URL = URL_SANMAR + "mysanmar/sales-orders/active-orders#"
+ORDER_DETAILS_BASE = URL_SANMAR + "mysanmar/sales-orders/order-details"
+
+
+UPS_SEL = {
+    "tracking_number": "#stApp_trackingNumber",
+    "delivered_label": "#st_App_DelvdLabel",
+    "status_current": "#stApp_txtPackageStatus",
+    "delivered_when": "#st_App_PkgStsMonthNum",
+    "delivered_time": "#st_App_PkgStsTime",
+    "delivered_loc": "#st_App_PkgStsLoc",
+    "ship_to_city": "#stApp_txtAddress",
+    "ship_to_country": "#stApp_txtCountry",
+    "received_by": "#stApp_valReceivedBy",
+}
 
 
 async def process_item(page: Page, item: Item) -> Tuple[bool, List[str]]:
@@ -214,19 +233,15 @@ async def add_requested_sizes(
         remaining = target_qty
         candidates = normalize_size(str(s.size or ""))
 
-        # pick first size label present in table
         size_key = next((c for c in candidates if c in size_entries), None)
         if not size_key:
-            # no matching column → treat as OOS for this page
             oos_sizes.append(str(s.size))
             continue
 
-        # size_entries[size_key] -> List[Tuple[warehouse_name: str, input: Locator, available_qty: int]]
         for wh_name, input_field, available_qty in size_entries[size_key]:
             if remaining <= 0:
                 break
 
-            # skip disabled/zero
             try:
                 if await input_field.is_disabled():
                     continue
@@ -249,7 +264,6 @@ async def add_requested_sizes(
                 added_any = True
                 remaining -= to_take
             except Exception:
-                # if this cell fails, try next warehouse cell
                 continue
 
         if remaining > 0:
@@ -266,3 +280,289 @@ async def add_requested_sizes(
         await page.wait_for_timeout(500)
 
     return added_any, oos_sizes
+
+
+async def get_active_order_status(page: Page):
+    await page.goto(ACTIVE_ORDERS_URL)
+    await page.get_by_role("link", name="Advanced Search").click()
+    await page.get_by_label("Order Status").select_option("sanmarShipped")
+    await page.locator('button[name="salesOrderSearchBtn"]').click()
+    await page.wait_for_timeout(1000)
+    await page.wait_for_selector(
+        "#sales-order-table tbody tr.orders-separator", timeout=30000
+    )
+    results = await open_all_orders_in_parallel(
+        page, max_concurrency=4, track_max_concurrency=2
+    )
+
+    print(f"[get_active_order_status] results: {results}")
+    return results
+
+
+def build_order_url(order_no: str) -> str:
+    params = {
+        "salesOrderNumber": order_no,
+        "orderType": "blanks",
+        "orderStatus": "sanmarShipped",
+    }
+    return f"{ORDER_DETAILS_BASE}?{urlencode(params)}"
+
+
+async def _find_ups_context(page: Page) -> Union[Page, Frame]:
+    """
+    Returns the context (Page or Frame) that actually contains UPS selectors.
+    We first try the top page; if not found, we scan iframes.
+    """
+    sel = f'{UPS_SEL["tracking_number"]}, {UPS_SEL["status_current"]}'
+
+    # 1) Try top-level page quickly
+    try:
+        await page.wait_for_selector(sel, timeout=2500)
+        return page
+    except PWTimeoutError:
+        pass
+
+    # 2) Search frames
+    deadline = (
+        page.context.timeouts()["default"]
+        if hasattr(page.context, "timeouts")
+        else None
+    )
+    end = page._loop.time() + (UPS_WAIT_TIMEOUT / 1000)
+
+    while page._loop.time() < end:
+        for fr in page.frames:
+            try:
+                # quick sanity: only check frames that have domcontentloaded
+                await fr.wait_for_selector("html, body", timeout=500)
+                # look for any UPS selector
+                await fr.wait_for_selector(sel, timeout=1000)
+                return fr
+            except Exception:
+                continue
+        await asyncio.sleep(0.3)
+
+    # final attempt: raise to caller
+    raise PWTimeoutError(f"UPS context not found within {UPS_WAIT_TIMEOUT}ms")
+
+
+async def _parse_ups_tracking(ctx: Union[Page, Frame]) -> dict:
+    """
+    Extract key tracking info from the UPS 'simplified tracking' page/frame.
+    """
+
+    async def _txt(sel: str) -> Optional[str]:
+        loc = ctx.locator(sel).first
+        try:
+            if await loc.count() == 0:
+                return None
+            if not await loc.is_visible():
+                return None
+            return (await loc.inner_text()).strip()
+        except Exception:
+            return None
+
+    tn = await _txt(UPS_SEL["tracking_number"])
+    st = await _txt(UPS_SEL["status_current"])
+    dwh = await _txt(UPS_SEL["delivered_when"])
+    dti = await _txt(UPS_SEL["delivered_time"])
+    dlo = await _txt(UPS_SEL["delivered_loc"])
+    cty = await _txt(UPS_SEL["ship_to_city"])
+    cty2 = await _txt(UPS_SEL["ship_to_country"])
+    rcv = await _txt(UPS_SEL["received_by"])
+
+    delivered = await ctx.locator(UPS_SEL["delivered_label"]).count() > 0
+
+    return {
+        "tracking_number": tn,
+        "status": st,
+        "delivered": delivered,
+        "delivered_when_text": dwh,
+        "delivered_time_text": dti,
+        "delivered_location": dlo,
+        "ship_to": " ".join([x for x in [cty, cty2] if x]),
+        "received_by": rcv,
+    }
+
+
+UPS_WAIT_TIMEOUT = 60000
+UPS_MAX_RETRIES = 3
+UPS_BACKOFFS = [0.5, 1.5, 3.0]
+
+
+def normalize_ups_url(href: str) -> str:
+    parts = list(urlsplit(href))
+    parts[2] = re.sub(r"/trackdetails/?$", "", parts[2])
+    return urlunsplit(parts)
+
+
+async def _dismiss_ups_banners(p: Page) -> None:
+    try:
+        btn = p.locator("#onetrust-accept-btn-handler")
+        if await btn.count():
+            await btn.click(timeout=3000)
+    except Exception:
+        pass
+    try:
+        alt = p.get_by_role("button", name=re.compile(r"Accept|Agree|Cookies", re.I))
+        if await alt.count():
+            await alt.first.click(timeout=3000)
+    except Exception:
+        pass
+    try:
+        alt_btn = p.get_by_role(
+            "button", name=re.compile(r"Accept All Cookies|Agree|Accept", re.I)
+        )
+        if await alt_btn.count():
+            await alt_btn.first.click(timeout=3000)
+    except Exception:
+        pass
+
+
+async def _open_tracking_tab(context: BrowserContext, href: str, order_no: str):
+    url = normalize_ups_url(href)
+    p = await context.new_page()
+    try:
+        for attempt in range(UPS_MAX_RETRIES):
+            try:
+                await p.goto(url, wait_until="domcontentloaded")
+                await p.wait_for_load_state("load")
+                await _dismiss_ups_banners(p)
+
+                ctx = await _find_ups_context(p)
+
+                details = await _parse_ups_tracking(ctx)
+                return {
+                    "order": order_no,
+                    "tracking_url": url,
+                    "details": details,
+                }
+            except Exception as e:
+                if attempt < UPS_MAX_RETRIES - 1:
+                    await asyncio.sleep(
+                        UPS_BACKOFFS[min(attempt, len(UPS_BACKOFFS) - 1)]
+                    )
+                    continue
+    finally:
+        try:
+            await close_page(page)
+        except Exception:
+            pass
+
+
+async def _open_all_tracking_for_order(
+    page: Page,
+    context: BrowserContext,
+    order_no: str,
+    track_max_concurrency: int | None = None,
+):
+    tracking_links = page.locator('#shipped-items-content a[href*="track"]')
+
+    try:
+        header = page.locator("#shipped-items-header")
+        if await header.is_visible():
+            content = page.locator("#shipped-items-content")
+            if not await content.get_attribute("class") or "show" not in (
+                await content.get_attribute("class") or ""
+            ):
+                await header.click()
+                await expect(content).to_be_visible(timeout=5000)
+    except Exception:
+        pass
+
+    count = await tracking_links.count()
+    if count == 0:
+        return []
+
+    hrefs = set()
+    for i in range(count):
+        href = await tracking_links.nth(i).get_attribute("href")
+        if href:
+            hrefs.add(href)
+
+    if track_max_concurrency and track_max_concurrency > 0:
+        sem = asyncio.Semaphore(track_max_concurrency)
+
+        async def sem_task(u: str):
+            async with sem:
+                return await _open_tracking_tab(context, u, order_no)
+
+        tasks = [asyncio.create_task(sem_task(u)) for u in hrefs]
+    else:
+        tasks = [
+            asyncio.create_task(_open_tracking_tab(context, u, order_no)) for u in hrefs
+        ]
+
+    return await asyncio.gather(*tasks)
+
+
+async def _open_order_in_new_tab(
+    context: BrowserContext, order_no: str, track_max_concurrency: int | None = None
+):
+    p = await context.new_page()
+    url = build_order_url(order_no)
+    try:
+        await p.goto(url, wait_until="domcontentloaded")
+        await p.wait_for_url(
+            lambda u: f"salesOrderNumber={order_no}" in u, timeout=30000
+        )
+        await p.wait_for_load_state("networkidle")
+
+        tracking_results = await _open_all_tracking_for_order(
+            p, context, order_no, track_max_concurrency=track_max_concurrency
+        )
+
+        return {
+            "order": order_no,
+            "status": "opened",
+            "tracking_results": tracking_results,
+        }
+    except Exception as e:
+        return {"order": order_no, "status": f"failed: {e}", "tracking_results": []}
+    finally:
+        # Close the order-details tab
+        try:
+            await close_page(p)
+        except Exception:
+            pass
+
+
+async def open_all_orders_in_parallel(
+    page: Page,
+    max_concurrency: int | None = None,
+    track_max_concurrency: int | None = None,
+):
+    order_strongs = page.locator("#sales-order-table td.col-order-number a strong")
+    count = await order_strongs.count()
+    if count == 0:
+        return []
+
+    order_numbers = []
+    for i in range(count):
+        txt = (await order_strongs.nth(i).inner_text()).strip()
+        if txt:
+            order_numbers.append(txt)
+
+    context = page.context
+
+    if max_concurrency and max_concurrency > 0:
+        sem = asyncio.Semaphore(max_concurrency)
+
+        async def sem_task(no: str):
+            async with sem:
+                return await _open_order_in_new_tab(
+                    context, no, track_max_concurrency=track_max_concurrency
+                )
+
+        tasks = [asyncio.create_task(sem_task(no)) for no in order_numbers]
+    else:
+        tasks = [
+            asyncio.create_task(
+                _open_order_in_new_tab(
+                    context, no, track_max_concurrency=track_max_concurrency
+                )
+            )
+            for no in order_numbers
+        ]
+
+    return await asyncio.gather(*tasks)
