@@ -1,8 +1,15 @@
-2025/11/04-02:31:23.202 1808db Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/MANIFEST-000001
-2025/11/04-02:31:23.203 1808db Recovering log #34
-2025/11/04-02:31:23.204 1808db Level-0 table #37: started
-2025/11/04-02:31:23.208 1808db Level-0 table #37: 19223 bytes OK
-2025/11/04-02:31:23.210 1808db Recovering log #37
-2025/11/04-02:31:23.212 1808db Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/000037.log 
-2025/11/04-02:31:23.219 1808db Delete type=0 #34
-2025/11/04-02:31:23.219 1808db Delete type=2 #38
+2025/11/04-03:16:23.412 1b6157 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/MANIFEST-000001
+2025/11/04-03:16:23.413 1b6157 Recovering log #37
+2025/11/04-03:16:23.414 1b6157 Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/000037.log 
+2025/11/04-03:16:32.151 1b615b Level-0 table #40: started
+2025/11/04-03:16:32.154 1b615b Level-0 table #40: 17467 bytes OK
+2025/11/04-03:16:32.157 1b615b Delete type=0 #37
+2025/11/04-03:16:32.157 1b615b Compacting 4@0 + 1@1 files
+2025/11/04-03:16:32.163 1b615b Generated table #41@0: 3168 keys, 54036 bytes
+2025/11/04-03:16:32.164 1b615b Compacted 4@0 + 1@1 files => 54036 bytes
+2025/11/04-03:16:32.166 1b615b compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/11/04-03:16:32.167 1b615b Delete type=2 #30
+2025/11/04-03:16:32.167 1b615b Delete type=2 #33
+2025/11/04-03:16:32.167 1b615b Delete type=2 #35
+2025/11/04-03:16:32.167 1b615b Delete type=2 #37
+2025/11/04-03:16:32.167 1b615b Delete type=2 #40

@@ -642,27 +642,30 @@ async def _open_all_tracking_for_order(
 
 
 async def _open_order_in_new_tab(
-    context: BrowserContext, order_no: str, track_max_concurrency: int | None = None
+    context: BrowserContext,
+    so_no: str,
+    po_no: str,
+    track_max_concurrency: int | None = None,
 ):
     p = await context.new_page()
-    url = build_order_url(order_no)
+    url = build_order_url(so_no)
     try:
+
         await p.goto(url, wait_until="domcontentloaded")
-        await p.wait_for_url(
-            lambda u: f"salesOrderNumber={order_no}" in u, timeout=30000
-        )
+        await p.wait_for_url(lambda u: f"salesOrderNumber={so_no}" in u, timeout=30000)
         await p.wait_for_load_state("networkidle")
 
         tracking_results = await _open_all_tracking_for_order(
-            p, context, order_no, track_max_concurrency=track_max_concurrency
+            p, context, so_no, track_max_concurrency=track_max_concurrency
         )
 
         return {
-            "order": order_no,
+            "order": so_no,
+            "po": po_no,
             "tracking_results": tracking_results,
         }
     except Exception as e:
-        return {"order": order_no, "status": f"failed: {e}", "tracking_results": []}
+        return {"order": so_no, "status": f"failed: {e}", "tracking_results": []}
     finally:
         # Close the order-details tab
         try:
@@ -677,36 +680,48 @@ async def open_all_orders_in_parallel(
     track_max_concurrency: int | None = None,
 ):
     order_strongs = page.locator("#sales-order-table td.col-order-number a strong")
+    po_numbers_span = page.locator("#sales-order-table td.col-purchase-order span")
+
     count = await order_strongs.count()
     if count == 0:
         return []
 
-    order_numbers = []
+    pairs: list[tuple[str, str]] = []
+    po_count = await po_numbers_span.count()
+
     for i in range(count):
-        txt = (await order_strongs.nth(i).inner_text()).strip()
-        if txt:
-            order_numbers.append(txt)
+        so_txt = (await order_strongs.nth(i).inner_text()).strip()
+        if not so_txt:
+            continue
+
+        po_txt = ""
+        if i < po_count:
+            raw = (await po_numbers_span.nth(i).inner_text()) or ""
+            po_txt = raw.strip() or ""
+
+        pairs.append((so_txt, po_txt))
 
     context = page.context
+
+    async def _task(so_no: str, po_no: str):
+        return await _open_order_in_new_tab(
+            context,
+            so_no,
+            po_no,
+            track_max_concurrency=track_max_concurrency,
+        )
 
     if max_concurrency and max_concurrency > 0:
         sem = asyncio.Semaphore(max_concurrency)
 
-        async def sem_task(no: str):
+        async def sem_task(so_no: str, po_no: str):
             async with sem:
-                return await _open_order_in_new_tab(
-                    context, no, track_max_concurrency=track_max_concurrency
-                )
+                return await _task(so_no, po_no)
 
-        tasks = [asyncio.create_task(sem_task(no)) for no in order_numbers]
-    else:
         tasks = [
-            asyncio.create_task(
-                _open_order_in_new_tab(
-                    context, no, track_max_concurrency=track_max_concurrency
-                )
-            )
-            for no in order_numbers
+            asyncio.create_task(sem_task(so_no, po_no)) for (so_no, po_no) in pairs
         ]
+    else:
+        tasks = [asyncio.create_task(_task(so_no, po_no)) for (so_no, po_no) in pairs]
 
     return await asyncio.gather(*tasks)
