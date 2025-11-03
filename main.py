@@ -4,8 +4,17 @@ import os
 import re
 import tempfile
 from contextlib import asynccontextmanager
-from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, List,
-                    Optional, Tuple, Union)
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
@@ -45,6 +54,7 @@ SALES_REP_LINKS: Dict[str, str] = {
     "courtney": "jobs?view=d2f04e58-5605-43ef-997c-4bc2b78db50f",
 }
 
+
 def _require_creds():
     if not SHOPVOX_EMAIL or not SHOPVOX_PASSWORD:
         raise HTTPException(
@@ -60,14 +70,24 @@ async def _safe_inner_text(locator, timeout: int = 250) -> Optional[str]:
         return None
 
 
-def _parse_part_code(product_line_text: Optional[str]) -> Optional[str]:
-    if not product_line_text:
-        return None
-    if " - " in product_line_text:
-        tail = product_line_text.split(" - ")[-1].strip()
-        return re.sub(r"[^\w\-]+$", "", tail)
-    m = re.findall(r"[A-Za-z0-9\-]+", product_line_text)
-    return m[-1] if m else product_line_text.strip()
+def _parse_ss_part(text: str) -> str:
+    m = re.match(r"\s*([A-Za-z0-9-]+)", text)
+    return m.group(1) if m else text.strip()
+
+
+def _parse_sanmar_part(text: str) -> str:
+    if " - " in text:
+        tail = text.split(" - ")[-1].strip()
+        return re.sub(r"[^\w-]+$", "", tail)
+    m = re.findall(r"[A-Za-z0-9-]+", text)
+    return m[-1] if m else text.strip()
+
+
+def _parse_part_code(product_line_text: str, store: str) -> Optional[str]:
+    if store == "SanMar":
+        return _parse_sanmar_part(product_line_text)
+    if store == "S&S Activewear":
+        return _parse_ss_part(product_line_text)
 
 
 def _normalize_size_label(label: str) -> str:
@@ -75,14 +95,22 @@ def _normalize_size_label(label: str) -> str:
         return "qty"
     u = label.strip().upper()
     canonical = {
-        "XSM": "XS", "X-SMALL": "XS",
-        "SM": "S", "SMALL": "S",
-        "MED": "M", "MEDIUM": "M",
-        "LG": "L", "LARGE": "L",
-        "XLG": "XL", "X-LARGE": "XL",
-        "XXL": "2XL", "2X-LARGE": "2XL",
-        "XXXL": "3XL", "3X-LARGE": "3XL",
-        "XXXXL": "4XL", "4X-LARGE": "4XL",
+        "XSM": "XS",
+        "X-SMALL": "XS",
+        "SM": "S",
+        "SMALL": "S",
+        "MED": "M",
+        "MEDIUM": "M",
+        "LG": "L",
+        "LARGE": "L",
+        "XLG": "XL",
+        "X-LARGE": "XL",
+        "XXL": "2XL",
+        "2X-LARGE": "2XL",
+        "XXXL": "3XL",
+        "3X-LARGE": "3XL",
+        "XXXXL": "4XL",
+        "4X-LARGE": "4XL",
         # one-size variants:
         "OS": "ONE SIZE",
         "OSFA": "ONE SIZE",
@@ -90,8 +118,11 @@ def _normalize_size_label(label: str) -> str:
         "QTY": "qty",
     }
     return canonical.get(u, u)
+
+
 def _normalize_key_text(s: str) -> str:
     return (s or "").strip()
+
 
 def _to_float(s: Optional[str]) -> Optional[float]:
     if s is None:
@@ -113,9 +144,9 @@ async def _safe_input_value(locator, timeout: int = 250) -> Optional[str]:
     except Exception:
         return None
 
+
 def _normalize_store(s: Optional[str]) -> str:
     return (s or "").strip().casefold()
-
 
 
 def safe_remove(path: str):
@@ -132,6 +163,7 @@ CHROME_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0.0.0 Safari/537.36"
 )
+
 
 async def _init_playwright_and_context():
     """
@@ -193,8 +225,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _shutdown_playwright()
 
 
-
-
 async def clean_not_order_yet_tags(
     page: Page,
     orders: List[str],
@@ -209,7 +239,9 @@ async def clean_not_order_yet_tags(
         modal = p.locator("#root-modals-dropdowns [role='dialog']").first
         await modal.wait_for(state="visible", timeout=10_000)
 
-        indicator = modal.locator(".css-1xb41ip-indicatorContainer, [class*='indicatorContainer']").last
+        indicator = modal.locator(
+            ".css-1xb41ip-indicatorContainer, [class*='indicatorContainer']"
+        ).last
         if await indicator.count() > 0:
             await indicator.click()
         else:
@@ -230,7 +262,8 @@ async def clean_not_order_yet_tags(
         except Exception:
             pass
         try:
-            await listbox.evaluate("""
+            await listbox.evaluate(
+                """
             el => {
               const getStyle = n => n && n.ownerDocument.defaultView.getComputedStyle(n);
               let p = el.parentElement;
@@ -245,7 +278,8 @@ async def clean_not_order_yet_tags(
               }
               el.scrollIntoView({ block: 'center' });
             }
-            """)
+            """
+            )
         except Exception:
             pass
 
@@ -289,12 +323,13 @@ async def clean_not_order_yet_tags(
 
         await pick_ordered_and_submit(p)
 
-
     async def run_one(idx: int, order: str, sem: asyncio.Semaphore):
         async with sem:
             page = await ctx.new_page()
             page.on("popup", lambda p: asyncio.create_task(p.close()))
-            await page.goto(order, wait_until="domcontentloaded", timeout=goto_timeout_ms)
+            await page.goto(
+                order, wait_until="domcontentloaded", timeout=goto_timeout_ms
+            )
             await page.wait_for_load_state("load")
             await tag_cleanup_on_order_page(page)
 
@@ -311,9 +346,11 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
         "s&s activewear": s_and_s.home,
     }
 
-    STORE_PROCESSORS: Dict[str, Callable[[Page, Item], Awaitable[Tuple[bool, List[str]]]]] = {
+    STORE_PROCESSORS: Dict[
+        str, Callable[[Page, Item], Awaitable[Tuple[bool, List[str]]]]
+    ] = {
         "sanmar": sanmar.process_item,
-        "s&s activewear":s_and_s.process_item,
+        "s&s activewear": s_and_s.process_item,
     }
 
     ctx = await get_ctx()
@@ -343,11 +380,10 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
 
         await page.set_viewport_size({"width": 1366, "height": 900})
         await page.context.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
-        processed_any = bool(processed_items) 
+        processed_any = bool(processed_items)
         async with sem:
             try:
                 for store_key, group in by_store.items():
-
 
                     processor = STORE_PROCESSORS.get(store_key)
                     home = STORE_HOMES.get(store_key)
@@ -359,7 +395,11 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
                         for it in group:
                             if _normalize_store(it.store) == "custom":
                                 skipped_custom.append(
-                                    {"part": it.part, "color": it.color, "store": it.store}
+                                    {
+                                        "part": it.part,
+                                        "color": it.color,
+                                        "store": it.store,
+                                    }
                                 )
                                 continue
 
@@ -370,7 +410,7 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
                             if added_any:
                                 any_added_overall = True
 
-                            processed_items.append({"part": it.part, "color": it.color })
+                            processed_items.append({"part": it.part, "color": it.color})
 
             finally:
                 if page:
@@ -417,91 +457,6 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
     sem = asyncio.Semaphore(max_concurrency)
     tasks = [asyncio.create_task(process_order(order, sem, ctx)) for order in orders]
     return await asyncio.gather(*tasks, return_exceptions=False)
-
-    
-    async def process_order(order: "SalesOrder", sem: asyncio.Semaphore):
-        def is_sanmar(store: str) -> bool:
-            return (store or "").strip().lower() == "sanmar"
-
-        async with sem:
-            has_sanmar = any(((it.store).strip().casefold() == "sanmar") for it in order.items)
-
-            page = await ctx.new_page()
-            page.on("popup", lambda p: asyncio.create_task(p.close()))
-            if has_sanmar:
-                await goto_home(page)
-
-            all_out_of_stock: Dict[str, List[str]] = {}     # {part: [sizes]}
-            skipped_custom: List[Dict[str, str]] = []       # [{part,color,store}]
-            processed_items: List[Dict[str, str]] = []      # [{part,color}]
-            any_added_overall = False
-
-            for item in order.items:
-                if item.store == "sanmar":
-                    await process_sanmar(item)
-
-                if item.store == "sanmar":
-                    await process_s_and_s(item)
-
-                if not is_sanmar(item.store):
-                    skipped_custom.append(
-                        {
-                            "part": getattr(item, "part", ""),
-                            "color": getattr(item, "color", ""),
-                            "store": getattr(item, "store", ""),
-                        }
-                    )
-                    continue
-
-                await fill_search(page, item.part)
-                await open_color_detail(page, item.color)
-                oos_sizes, added_any = await add_requested_sizes(page, item.sizes)
-
-                if oos_sizes:
-                    all_out_of_stock[item.part] = oos_sizes
-                if added_any:
-                    any_added_overall = True
-                processed_items.append({"part": item.part, "color": item.color})
-
-            await page.close()
-
-            has_oos = bool(all_out_of_stock)
-            has_custom = bool(skipped_custom)
-            processed_sanmar = bool(processed_items)
-
-            # Decide status
-            if not processed_sanmar and has_custom:
-                status = "custom_store_only"
-                base_msg = f"Order contains only non-SanMar items; none processed. Skipped: {skipped_custom}"
-            elif processed_sanmar and not any_added_overall and has_oos:
-                status = "out_of_stock"
-                base_msg = f"All requested sizes for SanMar items are out of stock: {all_out_of_stock}"
-            elif has_oos and any_added_overall:
-                status = "partial"
-                base_msg = f"Some items were out of stock: {all_out_of_stock}"
-            elif any_added_overall:
-                status = "success"
-                base_msg = "All items added successfully"
-            else:
-                # Fallback: processed but neither added nor flagged OOS (e.g., mismatched sizes)
-                status = "no_items_added"
-                base_msg = "No items were added to cart."
-
-            return {
-                "order_id": order.id,
-                "url": order.url,
-                "customer": order.customer,
-                "status": status,
-                "message": base_msg,
-                "details": {
-                    "out_of_stock": all_out_of_stock,
-                    "skipped_custom": skipped_custom,
-                    "processed": processed_items,
-                    "any_added_overall": any_added_overall,
-                },
-            }
-
-
 
 
 async def get_sales_orders_urls(page: Page):
@@ -553,15 +508,8 @@ async def get_sales_orders_urls(page: Page):
 
         customer = (await customer_el.inner_text()).strip()
 
-
         if href:
-            sos.append(
-                {
-                    "id": int(id),
-                    "href": href,
-                    "customer": customer 
-                }
-            )
+            sos.append({"id": int(id), "href": href, "customer": customer})
     return sos
 
 
@@ -599,7 +547,9 @@ async def extract_line_items(page) -> List[Dict[str, Any]]:
         try:
             # Prefer scrolling the container (virtual lists)
             if await items_container.count() > 0:
-                await items_container.evaluate("el => { el.scrollTop = el.scrollHeight }")
+                await items_container.evaluate(
+                    "el => { el.scrollTop = el.scrollHeight }"
+                )
             else:
                 raise RuntimeError("no container")
         except Exception:
@@ -611,7 +561,9 @@ async def extract_line_items(page) -> List[Dict[str, Any]]:
         await page.wait_for_timeout(200)
 
     # 3) CARD selection: prefer apparel description cards; fallback to generic white cards
-    cards = page.locator("div.bg-white:has([class*='_apparelItemPricingDescriptionItemName_'])")
+    cards = page.locator(
+        "div.bg-white:has([class*='_apparelItemPricingDescriptionItemName_'])"
+    )
     if await cards.count() == 0:
         cards = page.locator("div.bg-white.borderRadius-8.p8")
     if await cards.count() == 0:
@@ -622,26 +574,30 @@ async def extract_line_items(page) -> List[Dict[str, Any]]:
         card = cards.nth(i)
 
         # Apparel layout?
-        desc_block = card.locator("[class*='_apparelItemPricingDescriptionItemName_']").first
+        desc_block = card.locator(
+            "[class*='_apparelItemPricingDescriptionItemName_']"
+        ).first
         is_apparel = (await desc_block.count()) > 0
 
         store = name_text = color = part = ""
 
         if is_apparel:
             store_p = desc_block.locator("p.css-i7pnfr:not(.mt4)").first
-            name_p  = desc_block.locator("p.mt4.css-i7pnfr").first
+            name_p = desc_block.locator("p.mt4.css-i7pnfr").first
             color_p = desc_block.locator("p.css-ifbqr7").first
 
             name_text = (await _safe_inner_text(name_p)) or ""
-            color     = (await _safe_inner_text(color_p)) or ""
-            store     = (await _safe_inner_text(store_p)) or ""
-            part      = _parse_part_code(name_text) or ""
+            color = (await _safe_inner_text(color_p)) or ""
+            store = (await _safe_inner_text(store_p)) or ""
+            part = _parse_part_code(name_text, store) or ""
         else:
             # Generic line item preview
             name_p = card.locator("[class^='_lineItemPreviewName_'] p.css-i7pnfr").first
             name_text = (await _safe_inner_text(name_p)) or ""
-            part = _parse_part_code(name_text) or ""
-            store = (await _safe_inner_text(card.locator("p.css-i7pnfr:not(.mt4)").first)) or "Custom"
+            store = (
+                await _safe_inner_text(card.locator("p.css-i7pnfr:not(.mt4)").first)
+            ) or "Custom"
+            part = _parse_part_code(name_text, store) or ""
             color = (await _safe_inner_text(card.locator("p.css-ifbqr7").first)) or ""
 
         # SIZE rows (apparel) or single quantity input (non-apparel)
@@ -667,9 +623,15 @@ async def extract_line_items(page) -> List[Dict[str, Any]]:
             for j in range(rcount):
                 size_row = size_rows_loc.nth(j)
                 size_label = (
-                    await _safe_inner_text(size_row.locator("div._apparelItemSizesPricingLabel_tgx96_30").first)
+                    await _safe_inner_text(
+                        size_row.locator(
+                            "div._apparelItemSizesPricingLabel_tgx96_30"
+                        ).first
+                    )
                 ) or ""
-                qty_val_opt = await _safe_input_value(size_row.locator("input[type='text']").first)
+                qty_val_opt = await _safe_input_value(
+                    size_row.locator("input[type='text']").first
+                )
                 qty_val = _to_float(qty_val_opt) or 0.0
                 sizes_list.append({"size": size_label, "quantity": float(qty_val)})
                 total_qty_for_card += float(qty_val)
@@ -694,7 +656,7 @@ async def extract_line_items(page) -> List[Dict[str, Any]]:
     merged: Dict[tuple, Dict[str, Any]] = {}
 
     for item in line_items:
-        part_key  = _normalize_key_text(item.get("part", ""))
+        part_key = _normalize_key_text(item.get("part", ""))
         color_key = _normalize_key_text(item.get("color", ""))
         store_key = _normalize_key_text(item.get("store", "Custom"))
 
@@ -705,8 +667,8 @@ async def extract_line_items(page) -> List[Dict[str, Any]]:
                 "part": part_key,
                 "color": color_key,
                 "store": store_key or "Custom",
-                "sizes": [],          # filled after summation
-                "_sizes_map": {},     # internal: size -> qty
+                "sizes": [],  # filled after summation
+                "_sizes_map": {},  # internal: size -> qty
                 "total_quantity": 0.0,
             }
 
@@ -721,8 +683,16 @@ async def extract_line_items(page) -> List[Dict[str, Any]]:
     # 5) Finalize output (convert _sizes_map to sorted list)
     def _size_sort_key(s: Dict[str, Any]) -> int:
         order = {
-            "XS": 1, "S": 2, "M": 3, "L": 4, "XL": 5, "2XL": 6, "3XL": 7, "4XL": 8,
-            "ONE SIZE": 100, "qty": 999,
+            "XS": 1,
+            "S": 2,
+            "M": 3,
+            "L": 4,
+            "XL": 5,
+            "2XL": 6,
+            "3XL": 7,
+            "4XL": 8,
+            "ONE SIZE": 100,
+            "qty": 999,
         }
         return order.get(s["size"], 50)
 
@@ -740,6 +710,7 @@ async def extract_line_items(page) -> List[Dict[str, Any]]:
         result.append(v)
 
     return result
+
 
 async def get_so_details_parallel(
     page: Page,
@@ -772,7 +743,9 @@ async def get_so_details_parallel(
 
             for _ in range(4):
                 await p.goto(full_url, wait_until="domcontentloaded")
-                await p.wait_for_selector("h2.css-ycj89q:has-text('Items')", timeout=15_000)
+                await p.wait_for_selector(
+                    "h2.css-ycj89q:has-text('Items')", timeout=15_000
+                )
                 await page.wait_for_timeout(5000)
 
                 items = await extract_line_items(p)
@@ -780,11 +753,10 @@ async def get_so_details_parallel(
                 if len(items) > 0:
                     break
 
-
             results[idx] = {
                 "url": full_url,
                 "id": so["id"],
-                "customer": so['customer'],
+                "customer": so["customer"],
                 "items": items,
                 "total": sum(i.get("total_quantity", 0) or 0 for i in items),
             }
@@ -919,7 +891,7 @@ async def fetch_to_order_so():
         so_urls_full = await get_sales_orders_urls(page)
 
         so_urls = [
-            {"href": u["href"], "id": u["id"], "customer": u['customer']}
+            {"href": u["href"], "id": u["id"], "customer": u["customer"]}
             for u in so_urls_full
             if u.get("href") and u.get("id")
         ]
@@ -958,14 +930,11 @@ async def login():
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         page.on("popup", lambda p: asyncio.create_task(p.close()))
 
-        await page.goto(
-            f"{URL_SHOPVOX}/sign-in", wait_until="domcontentloaded")
+        await page.goto(f"{URL_SHOPVOX}/sign-in", wait_until="domcontentloaded")
 
         # Ensure sign-in form fields are visible
-        await page.locator("#email-input").wait_for(
-            state="visible")
-        await page.locator("#password-input").wait_for(
-            state="visible")
+        await page.locator("#email-input").wait_for(state="visible")
+        await page.locator("#password-input").wait_for(state="visible")
 
         # Fill credentials
         await page.fill("#email-input", SHOPVOX_EMAIL)
@@ -1154,8 +1123,7 @@ async def login_sanmar():
         page = await ctx.new_page()
         page.on("popup", lambda p: asyncio.create_task(p.close()))
 
-        await page.goto(
-            URL_SANMAR, wait_until="domcontentloaded")
+        await page.goto(URL_SANMAR, wait_until="domcontentloaded")
 
         await page.fill("#username", SANMAR_USERNAME)
         await page.fill("#password", SANMAR_PASSWORD)
@@ -1180,6 +1148,7 @@ async def login_sanmar():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
+
 @app.get("/login/ss")
 async def login_ss():
     ctx = await get_ctx()
@@ -1197,7 +1166,7 @@ async def login_ss():
 
 @app.get("/ss/accept-cookies")
 async def ss_accept_cookies():
-    
+
     ctx = await get_ctx()
     page = await ctx.new_page()
     await s_and_s.accept_cookies(page)
@@ -1209,6 +1178,7 @@ async def ss_accept_cookies():
         },
         status_code=200,
     )
+
 
 @app.get("/to-order")
 async def get_to_order_so():
@@ -1223,6 +1193,7 @@ async def get_to_order_so():
 async def add_to_cart_r(orders: List[SalesOrder]):
     result = await add_to_cart(orders)
     return JSONResponse(content={"result": result}, status_code=200)
+
 
 @app.post("/update-so-tag-ordered")
 async def update_so_tag(orders: List[str]):
