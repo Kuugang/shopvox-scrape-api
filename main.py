@@ -4,17 +4,8 @@ import os
 import re
 import tempfile
 from contextlib import asynccontextmanager
-from typing import (
-    Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, List,
+                    Optional, Tuple, Union)
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
@@ -315,7 +306,7 @@ async def clean_not_order_yet_tags(
     async def run_one(idx: int, order: str, sem: asyncio.Semaphore):
         async with sem:
             page = await ctx.new_page()
-            page.on("popup", lambda p: asyncio.create_task(p.close()))
+            # page.on("popup", lambda p: asyncio.create_task(p.close()))
             await page.goto(
                 order, wait_until="domcontentloaded", timeout=goto_timeout_ms
             )
@@ -348,7 +339,7 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
         order.items.sort(key=lambda it: (it.store).lower(), reverse=True)
 
         page = await ctx.new_page()
-        page.on("popup", lambda p: asyncio.create_task(p.close()))
+        # page.on("popup", lambda p: asyncio.create_task(p.close()))
 
         all_out_of_stock: Dict[str, List[str]] = {}
         skipped_custom: List[Dict[str, str]] = []
@@ -580,7 +571,6 @@ async def extract_line_items(page) -> List[Dict[str, Any]]:
             store = (await _safe_inner_text(store_p)) or ""
             part = _parse_part_code(name_text, store) or ""
         else:
-            # Generic line item preview
             name_p = card.locator("[class^='_lineItemPreviewName_'] p.css-i7pnfr").first
             name_text = (await _safe_inner_text(name_p)) or ""
             store = (
@@ -766,7 +756,7 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
 
     ctx = await get_ctx()
     page = await ctx.new_page()
-    page.on("popup", lambda p: asyncio.create_task(p.close()))
+    # page.on("popup", lambda p: asyncio.create_task(p.close()))
 
     try:
 
@@ -811,7 +801,7 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
 async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
     ctx = await get_ctx()
     page = await ctx.new_page()
-    page.on("popup", lambda p: asyncio.create_task(p.close()))
+    # page.on("popup", lambda p: asyncio.create_task(p.close()))
 
     try:
 
@@ -868,7 +858,7 @@ async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
 async def fetch_to_order_so():
     ctx = await get_ctx()
     page = await ctx.new_page()
-    page.on("popup", lambda p: asyncio.create_task(p.close()))
+    # page.on("popup", lambda p: asyncio.create_task(p.close()))
 
     try:
         await page.goto(
@@ -917,7 +907,7 @@ async def login():
     try:
         ctx = await get_ctx()
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        page.on("popup", lambda p: asyncio.create_task(p.close()))
+        # page.on("popup", lambda p: asyncio.create_task(p.close()))
 
         await page.goto(f"{URL_SHOPVOX}/sign-in", wait_until="domcontentloaded")
 
@@ -992,7 +982,7 @@ async def login_mfa(body: MfaBodyModel):
     try:
         ctx = await get_ctx()
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        page.on("popup", lambda p: asyncio.create_task(p.close()))
+        # page.on("popup", lambda p: asyncio.create_task(p.close()))
 
         # If we're already away from /sign-in, treat as success
         if "/sign-in" not in page.url:

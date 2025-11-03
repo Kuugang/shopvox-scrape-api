@@ -30,6 +30,7 @@ async def _close_page(page: Page):
         if len(pages) > 1:
             await page.close()
         else:
+            await page.goto("about:blank")
             await page.bring_to_front()
     except Exception:
         pass

@@ -44,7 +44,7 @@ UPS_SEL = {
 
 
 async def login(page: Page):
-    page.on("popup", lambda p: asyncio.create_task(p.close()))
+    # page.on("popup", lambda p: asyncio.create_task(p.close()))
     await page.goto(URL_SANMAR, wait_until="domcontentloaded")
     await page.wait_for_load_state("load")
 
