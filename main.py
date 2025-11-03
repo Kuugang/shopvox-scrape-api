@@ -1175,8 +1175,6 @@ async def ss_accept_cookies():
 async def get_to_order_so():
 
     result = await fetch_to_order_so()
-    if len(result) <= 0:
-        return JSONResponse(content={"message": "no rows found"}, status_code=204)
     return JSONResponse(content={"result": result}, status_code=200)
 
 
