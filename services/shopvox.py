@@ -6,7 +6,7 @@ from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PWTimeoutError
 from playwright.async_api import expect
 
-from helpers import require_env
+from helpers import _normalize_size, require_env
 from schemas2 import SalesOrder
 
 BASE_URL = "https://express.shopvox.com/"
@@ -116,14 +116,27 @@ async def create_so(page: Page, order: SalesOrder):
         )
         product_input = page.get_by_role("combobox", name="* Product")
         found = False
+        is_custom = False
+        cat_index = 0
         for cat_index, cat in enumerate(catalogs):
-            if cat_index == 1:
+            if catalogs[cat_index] == "Custom":
+                is_custom = True
+
+            if cat_index >= 1:
                 await catalog_dropdown.click()
             await page.get_by_role("option", name=cat).click()
+
+            if is_custom:
+                await page.locator(
+                    'input[id="apparel.items[0].productName-input"]'
+                ).fill(product_name)
+                continue
+
             await product_input.click()
-            await product_input.fill("")
             await product_input.fill(product_name)
+
             await page.get_by_role("listbox").wait_for(state="visible")
+
             option = page.get_by_role("option").first
             try:
                 await option.wait_for(state="visible", timeout=5_000)
@@ -132,29 +145,44 @@ async def create_so(page: Page, order: SalesOrder):
                 break
             except PWTimeoutError:
                 continue
+
         # Color
-        await page.locator(
-            '[id="apparel.items[0].color-field-wrapper"] > .field-wrapper-container > .f.f-alignItems-c > .f-grow-1 > .css-nxiuxh-container > .css-8rytzr-control > .css-1fc4u07 > .css-cy4hh4'
-        ).click()
-        await page.get_by_role("combobox", name="* Color").fill(item.color)
-        await page.get_by_role("option", name=item.color, exact=True).click()
+
+        if is_custom:
+            await page.locator("input[id='apparel.items[0].color-input']").fill(
+                item.color
+            )
+        else:
+            await page.locator(
+                '[id="apparel.items[0].color-field-wrapper"] > .field-wrapper-container > .f.f-alignItems-c > .f-grow-1 > .css-nxiuxh-container > .css-8rytzr-control > .css-1fc4u07 > .css-cy4hh4'
+            ).click()
+            await page.get_by_role("combobox", name="* Color").fill(item.color)
+            await page.get_by_role("option", name=item.color, exact=True).click()
+
         # Wait for load
-        await page.locator("span.f-shrink-0.css-nk0bb7:has-text('Show More')").wait_for(
-            state="visible"
-        )
+        await page.locator(
+            "span.f-shrink-0.css-nk0bb7:has-text('Copy Style')"
+        ).wait_for(state="visible")
 
         # Size input
         sizes_container = page.locator("div._apparelItemSizes_tgx96_1").nth(index)
         await expect(sizes_container).to_be_visible()
 
+        normalized_size = _normalize_size(item.size)
         row = sizes_container.locator(
-            f"div.PricingTemplateApparelItemsItemSizesSize:has(div._apparelItemSizesPricingLabel_tgx96_30:text-is('{item.size}'))"
+            f"div.PricingTemplateApparelItemsItemSizesSize:has(div._apparelItemSizesPricingLabel_tgx96_30:text-is('{normalized_size}'))"
         ).first
         await expect(row).to_be_visible()
 
         qty_input = row.locator("input[id$='.quantity-input']").first
         await expect(qty_input).to_be_visible()
         await qty_input.fill(item.quantity)
+
+        if is_custom:
+            cost_input = row.locator("input[id$='.costInDollars-input']").first
+            await expect(cost_input).to_be_visible()
+            await cost_input.fill(item.price)
+
         await page.locator("button.ml4.css-xdirqf").click()
         await page.locator(
             f"p.fontWeight-b.f-shrink-0.css-i7pnfr:has-text('{index}')"

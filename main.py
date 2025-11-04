@@ -4,12 +4,20 @@ import re
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, List,
-                    Optional, Tuple, Union)
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from dotenv import load_dotenv
-from fastapi import (BackgroundTasks, Body, Depends, FastAPI, HTTPException,
-                     Query)
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from playwright._impl._errors import TargetClosedError
 from playwright.async_api import BrowserContext
@@ -1221,6 +1229,7 @@ async def get_omg_orders(
         status_code=200,
     )
 
+
 @app.patch("/omg/orders")
 async def update_omg_orders(
     start_date: Optional[datetime] = Query(None, alias="startDate"),
@@ -1255,8 +1264,14 @@ async def update_omg_orders(
     )
 
 
-@app.get("/shopvox/so/new")
+@app.post("/shopvox/so/new")
 async def omg_orders_to_shopvox(orders: List[schemas2.SalesOrder]):
+
+    # ctx = await get_ctx()
+    # page = await ctx.new_page()
+    #
+    # await shopvox.create_so(page, orders[0])
+
     ctx = await get_ctx()
 
     semaphore = asyncio.Semaphore(10)
