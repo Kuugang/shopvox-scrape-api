@@ -1,23 +1,15 @@
 import asyncio
-import datetime
 import os
 import re
 import tempfile
 from contextlib import asynccontextmanager
-from typing import (
-    Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
-)
+from datetime import datetime
+from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, List,
+                    Optional, Tuple, Union)
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import (BackgroundTasks, Body, Depends, FastAPI, HTTPException,
+                     Query)
 from fastapi.responses import FileResponse, JSONResponse
 from playwright._impl._errors import TargetClosedError
 from playwright.async_api import BrowserContext
@@ -29,8 +21,10 @@ from playwright.async_api import async_playwright
 
 import s_and_s
 import sanmar
+import schemas2
 from helpers import _close_page, _safe_remove, require_env
 from schemas import Item, JobFilters, JobFiltersModel, MfaBodyModel, SalesOrder
+from services import omg, shopvox
 
 load_dotenv()
 
@@ -1181,6 +1175,112 @@ async def sanmar_get_active_order_status():
     return JSONResponse(content={"result": result}, status_code=200)
 
 
+@app.get("/login/omg")
+async def login_omg():
+    ctx = await get_ctx()
+    page = await ctx.new_page()
+    await omg.login(page)
+
+    return JSONResponse(
+        content={
+            "message": "Successfully logged in",
+        },
+        status_code=200,
+    )
+
+
+@app.get("/omg/orders")
+async def get_omg_orders(
+    start_date: Optional[datetime] = Query(None, alias="startDate"),
+    end_date: Optional[datetime] = Query(None, alias="endDate"),
+    sale_code: Optional[str] = Query(None, alias="saleCode"),
+    sales_rep: Optional[int] = Query(None, alias="salesRep"),
+    status_id: Optional[int] = Query(None, alias="statusId"),
+    offset: int = Query(0, alias="from"),
+    size: int = Query(50, alias="size"),
+):
+    ctx = await get_ctx()
+    page = await ctx.new_page()
+
+    q = omg.OrdersQuery(
+        start_date=start_date,
+        end_date=end_date,
+        sale_code=sale_code,
+        sales_rep=sales_rep,
+        status_id=status_id,
+        offset=offset,
+        size=size,
+    )
+
+    orders = await omg.get_orders(page, q)
+
+    return JSONResponse(
+        content={
+            "result": orders,
+        },
+        status_code=200,
+    )
+
+@app.patch("/omg/orders")
+async def update_omg_orders(
+    start_date: Optional[datetime] = Query(None, alias="startDate"),
+    end_date: Optional[datetime] = Query(None, alias="endDate"),
+    sale_code: Optional[str] = Query(None, alias="saleCode"),
+    sales_rep: Optional[int] = Query(None, alias="salesRep"),
+    status_id: Optional[int] = Query(None, alias="statusId"),
+    offset: int = Query(0, alias="from"),
+    size: int = Query(50, alias="size"),
+    payload: Dict[str, Any] = Body(...),
+):
+    ctx = await get_ctx()
+    page = await ctx.new_page()
+
+    q = omg.OrdersQuery(
+        start_date=start_date,
+        end_date=end_date,
+        sale_code=sale_code,
+        sales_rep=sales_rep,
+        status_id=status_id,
+        offset=offset,
+        size=size,
+    )
+
+    await omg.update_orders(page, q, payload)
+
+    return JSONResponse(
+        content={
+            "result": "success",
+        },
+        status_code=200,
+    )
+
+
+@app.get("/shopvox/so/new")
+async def omg_orders_to_shopvox(orders: List[schemas2.SalesOrder]):
+    ctx = await get_ctx()
+
+    semaphore = asyncio.Semaphore(10)
+
+    async def process_order(order: schemas2.SalesOrder):
+        async with semaphore:
+            page = await ctx.new_page()
+            try:
+                await shopvox.create_so(page, order)
+                print(
+                    f"Successfully processed order: {order.id if hasattr(order, 'id') else 'unknown'}"
+                )
+            except Exception as e:
+                print(f"Error processing order: {e}")
+            finally:
+                await page.close()
+
+    tasks = [process_order(order) for order in orders]
+
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    return {"status": "completed", "total_orders": len(orders)}
+
+
 @app.get("/")
 async def hello():
-    return {"time": datetime.datetime.now().isoformat()}
+    return {"time": datetime.now().isoformat()}

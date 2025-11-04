@@ -147,7 +147,6 @@ async def accept_cookies(page: Page):
 
 
 async def login(page: Page):
-
     await page.set_viewport_size({"width": 1366, "height": 900})
     await page.context.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
 
