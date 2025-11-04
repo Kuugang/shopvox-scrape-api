@@ -4,13 +4,24 @@ import os
 import re
 import tempfile
 from contextlib import asynccontextmanager
-from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, List,
-                    Optional, Tuple, Union)
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
+from playwright._impl._errors import TargetClosedError
 from playwright.async_api import BrowserContext
+from playwright.async_api import Error as PWError
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page, Playwright
 from playwright.async_api import TimeoutError as PWTimeout
@@ -146,9 +157,6 @@ CHROME_UA = (
 
 
 async def _init_playwright_and_context():
-    """
-    Internal: start Playwright and create a persistent context exactly once.
-    """
     global _pw, _ctx
     async with _lock:
         if _pw is None:
@@ -185,15 +193,33 @@ async def _shutdown_playwright():
         _pw = None
 
 
+async def _warm_page(ctx: BrowserContext) -> None:
+    try:
+        if len(ctx.pages) == 0:
+            p = await ctx.new_page()
+            await p.goto("about:blank")
+            # keep it open
+        else:
+            p = await ctx.new_page()
+            await p.close()
+    except Exception as _:
+        raise
+
+
 async def get_ctx() -> BrowserContext:
-    """
-    Public helper: returns the long-lived persistent context.
-    Ensures it exists if called very early.
-    """
+    global _ctx
     if _ctx is None:
         await _init_playwright_and_context()
-    assert _ctx is not None
-    return _ctx
+    try:
+        assert _ctx is not None
+        await _warm_page(_ctx)
+        return _ctx
+    except (TargetClosedError, PWError, AssertionError, Exception):
+        await _shutdown_playwright()
+        await _init_playwright_and_context()
+        assert _ctx is not None
+        await _warm_page(_ctx)
+        return _ctx
 
 
 @asynccontextmanager
@@ -349,12 +375,6 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
         by_store: Dict[str, List[Item]] = {}
         for it in order.items:
             by_store.setdefault(_normalize_store(it.store), []).append(it)
-
-        # sanmar_key = "sanmar"
-        # s_and_s_key = "s&s activewear"
-        #
-        # sanmar_items = by_store.get(sanmar_key, [])
-        # s_and_s_items = by_store.get(s_and_s_key, [])
 
         has_custom = False
 
@@ -739,7 +759,7 @@ async def get_so_details_parallel(
                 "items": items,
                 "total": sum(i.get("total_quantity", 0) or 0 for i in items),
             }
-            await p.close()
+            await _close_page(p)
 
     tasks = [asyncio.create_task(fetch_one(i, so)) for i, so in enumerate(sos)]
     await asyncio.gather(*tasks, return_exceptions=False)
@@ -858,35 +878,24 @@ async def fetch_pending_jobs(filters: JobFilters) -> Union[str, dict]:
 async def fetch_to_order_so():
     ctx = await get_ctx()
     page = await ctx.new_page()
-    # page.on("popup", lambda p: asyncio.create_task(p.close()))
 
-    try:
-        await page.goto(
-            URL_SHOPVOX
-            + "/transactions/sales-orders?view=2225c6de-1500-414d-b393-1d0a5b098fef"
-        )
-        await page.locator("span:has-text('Sales Orders')").wait_for(state="visible")
-        await page.wait_for_timeout(5000)
-        so_urls_full = await get_sales_orders_urls(page)
+    await page.goto(
+        URL_SHOPVOX
+        + "/transactions/sales-orders?view=2225c6de-1500-414d-b393-1d0a5b098fef"
+    )
+    await page.locator("span:has-text('Sales Orders')").wait_for(state="visible")
+    await page.wait_for_timeout(5000)
+    so_urls_full = await get_sales_orders_urls(page)
 
-        so_urls = [
-            {"href": u["href"], "id": u["id"], "customer": u["customer"]}
-            for u in so_urls_full
-            if u.get("href") and u.get("id")
-        ]
+    so_urls = [
+        {"href": u["href"], "id": u["id"], "customer": u["customer"]}
+        for u in so_urls_full
+        if u.get("href") and u.get("id")
+    ]
 
-        result = await get_so_details_parallel(page, so_urls)
-        await _close_page(page)
-        return result
-
-    except PlaywrightError as e:
-        await _close_page(page)
-
-        return {"error": f"Playwright error: {str(e)}"}
-    except Exception as e:
-        await _close_page(page)
-
-        return {"error": f"Unexpected error: {str(e)}"}
+    result = await get_so_details_parallel(page, so_urls)
+    await _close_page(page)
+    return result
 
 
 app = FastAPI(title="ShopVox Scrape API", version="1", lifespan=lifespan)
