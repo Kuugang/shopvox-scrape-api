@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote, urlencode
 
 from playwright.async_api import Page
+from playwright.async_api import TimeoutError as PWTimeoutError
 from pydantic import BaseModel
 
 from helpers import _close_page, require_env
@@ -102,13 +103,15 @@ async def update_orders(page: Page, q: OrdersQuery, payload: Dict[str, Any]):
 async def get_orders(page: Page, q: OrdersQuery):
     await page.goto(build_orders_query(q), wait_until="domcontentloaded")
     await page.wait_for_load_state("load")
-
-    await page.wait_for_load_state("domcontentloaded")
-    await page.wait_for_selector("tbody tr.css-3c5joz", state="attached")
+    results = []
 
     rows = page.locator("tbody tr.css-3c5joz")
+    try:
+        await rows.first.wait_for(state="visible", timeout=5_000)
+    except PWTimeoutError:
+        return results
+
     row_count = await rows.count()
-    results = []
 
     for i in range(row_count):
         row = rows.nth(i)
