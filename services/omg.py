@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
 from urllib.parse import quote, urlencode
@@ -113,69 +114,108 @@ async def get_orders(page: Page, q: OrdersQuery):
 
     row_count = await rows.count()
 
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1
+
     for i in range(row_count):
         row = rows.nth(i)
-
         order_id_text = await row.locator("td:nth-child(2) strong").inner_text()
         store_name = await row.locator("td:nth-child(4)").inner_text()
         order_id = order_id_text.lstrip("#").strip()
 
-        toggle = row.locator("td:last-child i.fa.fa-chevron-down")
-        await toggle.scroll_into_view_if_needed()
-        await toggle.click()
-
-        expanded_tr = row.locator("xpath=following-sibling::tr[1]")
-        await expanded_tr.wait_for(state="attached")
-
-        await expanded_tr.locator("th:has-text('Product')").wait_for(state="visible")
-
-        detail_table = expanded_tr.locator("table.css-1ago99h")
-        product_rows = detail_table.locator("tr.css-98d6fm")
-        pcount = await product_rows.count()
         items = []
+        toggle: Any = None
+        for retry in range(MAX_RETRIES):
+            try:
+                toggle = row.locator("td:last-child i.fa.fa-chevron-down")
+                await toggle.scroll_into_view_if_needed()
+                await toggle.click()
 
-        for j in range(pcount):
-            pr = product_rows.nth(j)
+                expanded_tr = row.locator("xpath=following-sibling::tr[1]")
+                await expanded_tr.wait_for(state="attached", timeout=5000)
+                await expanded_tr.locator("th:has-text('Product')").wait_for(
+                    state="visible", timeout=5000
+                )
 
-            raw_name = await pr.locator(
-                "td:nth-child(1) .css-1v85qd1 > strong"
-            ).first.inner_text()
-            name = raw_name.split(".", 1)[0].strip()
+                detail_table = expanded_tr.locator("table.css-1ago99h")
+                product_rows = detail_table.locator("tr.css-98d6fm")
+                pcount = await product_rows.count()
 
-            color_text = await pr.locator(
-                "td:nth-child(1) p:has-text('Color:')"
-            ).first.inner_text()
-            size_text = await pr.locator(
-                "td:nth-child(1) p:has-text('Size:')"
-            ).first.inner_text()
-            color = color_text.split("Color:")[-1].strip()
-            size = size_text.split("Size:")[-1].strip()
+                if pcount == 0:
+                    raise ValueError("No products found")
 
-            quantity = (await pr.locator("td:nth-child(2)").inner_text()).strip()
+                for j in range(pcount):
+                    pr = product_rows.nth(j)
+                    raw_name = await pr.locator(
+                        "td:nth-child(1) .css-1v85qd1 > strong"
+                    ).first.inner_text()
+                    name = raw_name.split(".", 1)[0].strip()
+                    color_text = await pr.locator(
+                        "td:nth-child(1) p:has-text('Color:')"
+                    ).first.inner_text()
+                    size_text = await pr.locator(
+                        "td:nth-child(1) p:has-text('Size:')"
+                    ).first.inner_text()
+                    color = color_text.split("Color:")[-1].strip()
+                    size = size_text.split("Size:")[-1].strip()
+                    quantity = (
+                        await pr.locator("td:nth-child(2)").inner_text()
+                    ).strip()
+                    price_text = (
+                        await pr.locator("td:nth-child(4)").inner_text()
+                    ).strip()
+                    total_text = (
+                        await pr.locator("td:nth-child(5)").inner_text()
+                    ).strip()
+                    price = price_text.replace("$", "").strip()
+                    total = total_text.replace("$", "").strip()
+                    items.append(
+                        {
+                            "name": name.strip(),
+                            "color": color,
+                            "size": size,
+                            "quantity": quantity,
+                            "price": price,
+                            "total": total,
+                        }
+                    )
 
-            price_text = (await pr.locator("td:nth-child(4)").inner_text()).strip()
-            total_text = (await pr.locator("td:nth-child(5)").inner_text()).strip()
-            price = price_text.replace("$", "").strip()
-            total = total_text.replace("$", "").strip()
+                if items:
+                    break
 
-            items.append(
+            except (PWTimeoutError, ValueError, Exception) as e:
+                if retry < MAX_RETRIES - 1:
+                    print(
+                        f"Retry {retry + 1}/{MAX_RETRIES} for order {order_id}: {str(e)}"
+                    )
+                    try:
+                        await toggle.click()
+                        await asyncio.sleep(RETRY_DELAY)
+                    except:
+                        pass
+                else:
+                    print(
+                        f"Failed to extract items for order {order_id} after {MAX_RETRIES} retries"
+                    )
+
+        if not items:
+            print(f"Warning: No items found for order {order_id}")
+        seen = set()
+
+        clean_store = store_name.strip()
+        key = order_id
+
+        if key in seen:
+            pass
+        else:
+            seen.add(key)
+            results.append(
                 {
-                    "name": name.strip(),
-                    "color": color,
-                    "size": size,
-                    "quantity": quantity,
-                    "price": price,
-                    "total": total,
+                    "id": order_id,
+                    "store_name": clean_store,
+                    "order_name": f"{clean_store} {order_id}",
+                    "items": items,
                 }
             )
-
-        results.append(
-            {
-                "id": order_id,
-                "store_name": store_name.strip(),
-                "order_name": store_name + " " + order_id,
-                "items": items,
-            }
-        )
     await _close_page(page)
     return results
