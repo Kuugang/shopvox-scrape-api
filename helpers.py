@@ -68,30 +68,52 @@ def _normalize_size(size: str) -> str:
     """
     if not size:
         return "OTHER"
-
     s = size.strip().lower()
-
+    # Quick check for single-letter sizes BEFORE any processing
+    if s in {
+        "xs",
+        "s",
+        "m",
+        "l",
+        "xl",
+        "2xl",
+        "3xl",
+        "4xl",
+        "5xl",
+        "6xl",
+        "7xl",
+        "8xl",
+        "9xl",
+    }:
+        return s.upper()
     # Quick one-size checks
     if re.search(r"\b(osfa|one\s*size(\s*f(its)?\s*all)?|o/s|os)\b", s):
         return "OSFA"
-
     # Drop non-size descriptors (gender/age/fit/etc.)
     s = re.sub(
         r"\b(womens?|ladies|mens?|unisex|adult|youth|kids?|junior|toddler|infant)\b",
         "",
         s,
     )
-    s = re.sub(r"\b(w|m|f)\b", "", s)  # leftover single-letter gender marks
-    s = s.replace("’", "'").replace("‘", "'")
-
+    # Only remove single-letter gender marks if they're NOT the only character
+    if len(s.strip()) > 1:
+        s = re.sub(r"\b(w|m|f)\b", "", s)
+    s = s.replace("'", "'").replace("'", "'")
     # Normalize separators & spaces
     s = re.sub(r"[._\-\/]+", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
+    # Check if string is empty after normalization
+    if not s:
+        return "OTHER"
 
-    # Canonical words -> letters
-    s = re.sub(r"\b(extra\s*)?small\b", "xs", s)
-    s = re.sub(r"\bmedium\b", "m", s)
-    s = re.sub(r"\b(extra\s*)?large\b", "xl", s)
+    # CHECK NUMBERED XL PATTERNS FIRST (before any word replacements)
+    # Patterns like "2xl", "3 xl", "4x large"
+    m = re.search(r"\b(\d+)\s*x\s*l(arge)?\b", s)  # 2 x l, 2 x large
+    if m:
+        return f"{int(m.group(1))}XL"
+    m = re.search(r"\b(\d+)\s*xl\b", s)  # 2xl
+    if m:
+        return f"{int(m.group(1))}XL"
 
     # Patterns like "xxl", "xxxl", "xxxxl"
     m = re.search(r"\b(x{2,})\s*l\b", s)  # xx l, xxx l
@@ -99,14 +121,11 @@ def _normalize_size(size: str) -> str:
         n = len(m.group(1))
         return f"{n}XL" if n >= 2 else "XL"
 
-    # Patterns like "2xl", "3 xl", "4x large"
-    m = re.search(r"\b(\d+)\s*x\s*l\b", s)  # 2 x l
-    if m:
-        return f"{int(m.group(1))}XL"
-
-    m = re.search(r"\b(\d+)\s*xl\b", s)  # 2xl
-    if m:
-        return f"{int(m.group(1))}XL"
+    # NOW do word replacements (but ONLY extra small/large, not plain large)
+    s = re.sub(r"\bextra\s*small\b", "xs", s)
+    s = re.sub(r"\bextra\s*large\b", "xl", s)
+    s = re.sub(r"\bmedium\b", "m", s)
+    # Don't replace plain "small" or "large" - handle them separately below
 
     # Single X large variants: "x l", "x-large", "xlarge"
     if re.search(r"\bx\s*l\b|\bx-?large\b|\bxlarge\b", s):
@@ -114,11 +133,11 @@ def _normalize_size(size: str) -> str:
 
     # XS variants: "xsmall", "x-small", "xs"
     if re.search(r"\bxxs\b|\bxx-small\b|\bextra\s*extra\s*small\b", s):
-        return "XS"  # collapse 2XS -> XS for universal set
+        return "XS"
     if re.search(r"\bxs\b|\bx-?small\b|\bxsmall\b", s):
         return "XS"
 
-    # Plain S / M / L
+    # Plain S / M / L (check for words too)
     if re.search(r"\bs\b(?![a-z])|\bsmall\b", s):
         return "S"
     if re.search(r"\bm\b(?![a-z])|\bmedium\b|^md\b", s):
@@ -126,23 +145,42 @@ def _normalize_size(size: str) -> str:
     if re.search(r"\bl\b(?![a-z])|\blarge\b|^lg\b", s):
         return "L"
 
-    # If it’s exactly an XL token after normalization
+    # If it's exactly an XL token after normalization
     if re.fullmatch(r"xl", s):
         return "XL"
 
     # Sometimes strings end with the size token (e.g., "mens 2x-large")
-    tail = s.split()[-1]
+    words = s.split()
+    if not words:
+        return "OTHER"
+    tail = words[-1]
     # Try tail as last resort
     if tail in {"xs", "s", "m", "l", "xl"}:
         return tail.upper()
     m = re.fullmatch(r"(\d+)xl", tail)
     if m:
         return f"{int(m.group(1))}XL"
-
     # One more: "2x", "3x" without "l"
     m = re.fullmatch(r"(\d+)x", tail)
     if m:
         return f"{int(m.group(1))}XL"
-
-    # "one size" variants already handled; default
     return "OTHER"
+
+
+# Test cases
+test_cases = [
+    "Womens Large",
+    "Mens 2X-Large",
+    "Extra Large",
+    "2XL",
+    "Large",
+    "3X-Large",
+    "XL",
+    "Womens X-Large",
+    "X-Large",
+    "OSFA",
+]
+
+print("Test Results:")
+for test in test_cases:
+    print(f"{test:20s} -> {_normalize_size(test)}")
