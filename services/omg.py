@@ -124,12 +124,15 @@ async def get_orders(page: Page, q: OrdersQuery):
         order_id = order_id_text.lstrip("#").strip()
 
         items = []
-        toggle: Any = None
+        is_expanded = False  # Track expansion state
+
         for retry in range(MAX_RETRIES):
             try:
-                toggle = row.locator("td:last-child i.fa.fa-chevron-down")
-                await toggle.scroll_into_view_if_needed()
-                await toggle.click()
+                if not is_expanded:
+                    toggle = row.locator("td:last-child i.fa.fa-chevron-down")
+                    await toggle.scroll_into_view_if_needed()
+                    await toggle.click()
+                    is_expanded = True
 
                 expanded_tr = row.locator("xpath=following-sibling::tr[1]")
                 await expanded_tr.wait_for(state="attached", timeout=5000)
@@ -149,7 +152,21 @@ async def get_orders(page: Page, q: OrdersQuery):
                     raw_name = await pr.locator(
                         "td:nth-child(1) .css-1v85qd1 > strong"
                     ).first.inner_text()
-                    name = raw_name.split(".", 1)[0].strip()
+                    if "." in raw_name:
+                        # rsplit with maxsplit=1 splits from the right, only once
+                        parts = raw_name.rsplit(".", 1)
+                        name = parts[0].strip()
+                        style = parts[1].strip()
+                    else:
+                        # No period, take last word as style
+                        words = raw_name.strip().split()
+                        if len(words) > 1:
+                            name = " ".join(words[:-1])
+                            style = words[-1]
+                        else:
+                            name = raw_name.strip()
+                            style = ""
+
                     color_text = await pr.locator(
                         "td:nth-child(1) p:has-text('Color:')"
                     ).first.inner_text()
@@ -173,6 +190,7 @@ async def get_orders(page: Page, q: OrdersQuery):
                         {
                             "name": name.strip(),
                             "color": color,
+                            "style": style,
                             "size": size,
                             "quantity": quantity,
                             "price": price,
@@ -188,11 +206,8 @@ async def get_orders(page: Page, q: OrdersQuery):
                     print(
                         f"Retry {retry + 1}/{MAX_RETRIES} for order {order_id}: {str(e)}"
                     )
-                    try:
-                        await toggle.click()
-                        await asyncio.sleep(RETRY_DELAY)
-                    except:
-                        pass
+                    # Don't try to close it, just wait and retry
+                    await asyncio.sleep(RETRY_DELAY)
                 else:
                     print(
                         f"Failed to extract items for order {order_id} after {MAX_RETRIES} retries"
@@ -213,7 +228,7 @@ async def get_orders(page: Page, q: OrdersQuery):
                 {
                     "id": order_id,
                     "store_name": clean_store,
-                    "order_name": f"{clean_store} {order_id}",
+                    "order_name": f"{clean_store}",
                     "items": items,
                 }
             )

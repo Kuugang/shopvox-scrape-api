@@ -7,6 +7,7 @@ class SalesOrderItem(BaseModel):
     name: str
     color: str
     size: str
+    style: str | None
     quantity: str
     price: str
     total: str
