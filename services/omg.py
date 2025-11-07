@@ -229,7 +229,7 @@ async def get_orders(page: Page, q: OrdersQuery):
                 {
                     "id": order_id,
                     "store_name": clean_store,
-                    "order_name": f"{clean_store}",
+                    "order_name": f"{clean_store} {order_id}",
                     "items": items,
                 }
             )
