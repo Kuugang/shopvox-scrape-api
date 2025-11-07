@@ -65,7 +65,7 @@ async def create_so(page: Page, order: SalesOrder):
         try:
             await page.get_by_role("combobox", name="* Customer").fill("")
             await page.get_by_role("combobox", name="* Customer").press_sequentially(
-                order.store_name
+                order.store_name,
             )
 
             target_store = page.locator(f"div.ml4:has-text('{order.store_name}')")
@@ -81,7 +81,7 @@ async def create_so(page: Page, order: SalesOrder):
     await page.get_by_test_id("title-input").click()
 
     await page.get_by_test_id("title-input").press_sequentially(
-        order.order_name + " " + order.id
+        order.order_name + " " + order.id,
     )
 
     await page.locator(
@@ -94,6 +94,9 @@ async def create_so(page: Page, order: SalesOrder):
 
     await page.wait_for_load_state("load")
     await page.locator("p.css-fqwlf2:has-text('Customer')").wait_for(state="visible")
+    await page.reload()
+    await page.wait_for_load_state("load")
+    await page.locator("p.css-fqwlf2:has-text('Customer')").wait_for(state="visible")
 
     # await page.goto(
     #     "https://express.shopvox.com/transactions/sales-orders/05d26516-198a-484f-b368-062f39a63f46",
@@ -103,26 +106,30 @@ async def create_so(page: Page, order: SalesOrder):
     for index, item in enumerate(order.items):
         new_line_item_button = page.locator("button.css-gjgr8x")
         await new_line_item_button.wait_for(state="visible")
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(200)
         await new_line_item_button.click()
         create_line_item_button = page.locator("button.css-1f4m2s7")
         await create_line_item_button.wait_for(state="visible")
 
         product_input = page.locator("#productId-input")
-        await product_input.press_sequentially("APPAREL")
-        await page.wait_for_timeout(300)
+        await product_input.press_sequentially(
+            "APPAREL",
+        )
+        await page.wait_for_timeout(200)
         apparel_option = (
             page.get_by_role("option").filter(has_text=re.compile(r"^APPAREL$")).first
         )
         await expect(apparel_option).to_be_visible(timeout=10_000)
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(200)
         await apparel_option.click()
 
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(200)
         await page.get_by_test_id("name-input").click()
         await page.get_by_test_id("name-input").press("ControlOrMeta+a")
-        await page.get_by_test_id("name-input").press_sequentially(str(index))
-        await page.wait_for_timeout(300)
+        await page.get_by_test_id("name-input").press_sequentially(
+            str(index),
+        )
+        await page.wait_for_timeout(200)
         await page.locator(
             '[id="apparel.items[0].catalogId-field-wrapper"] > .field-wrapper-container > .f.f-alignItems-c > .f-grow-1 > .css-nxiuxh-container > .css-8rytzr-control > .css-1wy0on6 > .css-1xb41ip-indicatorContainer > .css-8mmkcg'
         ).click()
@@ -143,7 +150,7 @@ async def create_so(page: Page, order: SalesOrder):
         for cat_index, cat in enumerate(catalogs):
             is_custom = cat == "Custom"  # reset each loop
 
-            await page.wait_for_timeout(300)
+            await page.wait_for_timeout(200)
             if cat_index >= 1:
                 await catalog_dropdown.click()
             await page.get_by_role("option", name=cat).click()
@@ -151,18 +158,22 @@ async def create_so(page: Page, order: SalesOrder):
             if is_custom:
                 await page.locator(
                     'input[id="apparel.items[0].productName-input"]'
-                ).press_sequentially(item.name)
+                ).press_sequentially(
+                    item.name,
+                )
                 continue
 
             style_to_match = item.style or item.name
             pattern = rf"\b{re.escape(style_to_match)}\b"
 
-            for attempt in range(3):
+            for attempt in range(2):
                 try:
-                    await page.wait_for_timeout(300)
+                    await page.wait_for_timeout(200)
                     await product_input.click()
                     await product_input.fill("")  # ensure clean state
-                    await product_input.press_sequentially(style_to_match)
+                    await product_input.press_sequentially(
+                        style_to_match,
+                    )
 
                     await page.get_by_role("listbox").wait_for(
                         state="visible", timeout=5_000
@@ -174,13 +185,13 @@ async def create_so(page: Page, order: SalesOrder):
                     )
 
                     await option.wait_for(state="visible", timeout=10_000)
-                    await page.wait_for_timeout(300)
+                    await page.wait_for_timeout(1000)
                     await option.click()
 
                     found = True
                     break
                 except PWTimeoutError:
-                    if attempt == 3 - 1:
+                    if attempt == 2 - 1:
                         break
 
                     await page.wait_for_timeout(500 * (attempt + 1))
@@ -192,10 +203,13 @@ async def create_so(page: Page, order: SalesOrder):
             if found:
                 break
         # Color
+        await page.wait_for_timeout(1000)
         if is_custom:
             await page.locator(
                 "input[id='apparel.items[0].color-input']"
-            ).press_sequentially(item.color)
+            ).press_sequentially(
+                item.color,
+            )
         else:
             await page.locator(
                 '[id="apparel.items[0].color-field-wrapper"] > .field-wrapper-container > .f.f-alignItems-c > .f-grow-1 > .css-nxiuxh-container > .css-8rytzr-control > .css-1fc4u07 > .css-cy4hh4'
@@ -207,14 +221,18 @@ async def create_so(page: Page, order: SalesOrder):
                 color = f"{left.rstrip()}/ {right.lstrip()}"
 
             for retry in range(3):
+                await page.wait_for_timeout(1000)
                 try:
                     await page.get_by_role("combobox", name="* Color").fill("")
                     await page.get_by_role(
                         "combobox", name="* Color"
-                    ).press_sequentially(color)
+                    ).press_sequentially(
+                        color,
+                    )
 
-                    await page.wait_for_timeout(300)
+                    await page.wait_for_timeout(200)
                     await page.get_by_role("option", name=color, exact=True).click()
+                    break
 
                 except PWTimeoutError:
                     if retry == 3 - 1:
@@ -238,28 +256,34 @@ async def create_so(page: Page, order: SalesOrder):
         await expect(qty_input).to_be_visible()
 
         await qty_input.fill("")
-        await qty_input.press_sequentially(item.quantity)
+        await qty_input.press_sequentially(
+            item.quantity,
+        )
 
         if is_custom:
             cost_input = row.locator("input[id$='.costInDollars-input']").first
             await expect(cost_input).to_be_visible()
-            await cost_input.press_sequentially(item.price)
+            await cost_input.press_sequentially(
+                item.price,
+            )
 
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(200)
         await page.locator("button.ml4.css-xdirqf").click()
         await page.locator(
             f"p.fontWeight-b.f-shrink-0.css-i7pnfr:has-text('{index}')"
         ).wait_for(state="visible")
 
     # Add not order yet tag
-    await page.wait_for_timeout(300)
+    await page.wait_for_timeout(200)
     await page.get_by_role("button", name="Add Tag").click()
-    await page.get_by_role("combobox", name="Tags").press_sequentially("NOT ORDER YET")
-    await page.wait_for_timeout(300)
+    await page.get_by_role("combobox", name="Tags").press_sequentially(
+        "NOT ORDER YET",
+    )
+    await page.wait_for_timeout(200)
     await page.locator("div").filter(has_text=re.compile(r"^NOT ORDER YET$")).nth(
         1
     ).click()
-    await page.wait_for_timeout(300)
+    await page.wait_for_timeout(200)
 
     modal = page.locator("#root-modals-dropdowns [role='dialog']").first
     await modal.wait_for(state="visible", timeout=10_000)
