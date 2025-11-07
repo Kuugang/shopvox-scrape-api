@@ -110,6 +110,7 @@ async def get_orders(page: Page, q: OrdersQuery):
     try:
         await rows.first.wait_for(state="visible", timeout=5_000)
     except PWTimeoutError:
+        await _close_page(page)
         return results
 
     row_count = await rows.count()
