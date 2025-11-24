@@ -20,11 +20,10 @@ from playwright.async_api import TimeoutError as PWTimeout
 from playwright.async_api import async_playwright
 
 import s_and_s
-import sanmar
 import schemas2
 from helpers import _close_page, _safe_remove, require_env
 from schemas import Item, JobFilters, JobFiltersModel, MfaBodyModel, SalesOrder
-from services import omg, shopvox
+from services import omg, sanmar, shopvox
 
 load_dotenv()
 
@@ -359,7 +358,7 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
         order.items.sort(key=lambda it: (it.store).lower(), reverse=True)
 
         page = await ctx.new_page()
-        # page.on("popup", lambda p: asyncio.create_task(p.close()))
+        page.on("popup", lambda p: asyncio.create_task(p.close()))
 
         all_out_of_stock: Dict[str, List[str]] = {}
         skipped_custom: List[Dict[str, str]] = []

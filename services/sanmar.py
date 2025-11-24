@@ -169,9 +169,7 @@ async def build_size_inputs_by_warehouse(
 
 
 async def fill_search(page: Page, style_number: str):
-    search_inputs = page.locator(
-        'input#main-search[placeholder="Search by Product, Style Number, or Category"]'
-    )
+    search_inputs = page.locator("input#main-search")
     scount = await search_inputs.count()
     if scount == 0:
         search_inputs = page.locator('input[aria-label*="Search"]')
@@ -194,6 +192,9 @@ async def fill_search(page: Page, style_number: str):
 
 
 async def open_color_detail(page: Page, color: str):
+    await page.locator("#add-shopping-box-container").get_by_role(
+        "button", name="Add to shopping box"
+    ).wait_for(state="visible")
     wanted = " ".join(w.capitalize() for w in color.strip().split())
     color_a = page.locator(f"a[title='{wanted}']").first
 
