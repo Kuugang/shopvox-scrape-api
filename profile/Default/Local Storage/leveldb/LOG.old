@@ -1,8 +1,6 @@
-2025/11/24-23:00:32.028 262d0 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/MANIFEST-000001
-2025/11/24-23:00:32.032 262d0 Recovering log #66
-2025/11/24-23:00:32.032 262d0 Level-0 table #68: started
-2025/11/24-23:00:32.034 262d0 Level-0 table #68: 20312 bytes OK
-2025/11/24-23:00:32.035 262d0 Recovering log #68
-2025/11/24-23:00:32.035 262d0 Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/000068.log 
-2025/11/24-23:00:32.037 262d0 Delete type=0 #66
-2025/11/24-23:00:32.037 262d0 Delete type=2 #69
+2025/11/26-23:28:27.262 8b61a Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/MANIFEST-000001
+2025/11/26-23:28:27.270 8b61a Recovering log #73
+2025/11/26-23:28:27.271 8b61a Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/000073.log 
+2025/11/26-23:30:08.158 8b61d Level-0 table #78: started
+2025/11/26-23:30:08.161 8b61d Level-0 table #78: 16529 bytes OK
+2025/11/26-23:30:08.163 8b61d Delete type=0 #73

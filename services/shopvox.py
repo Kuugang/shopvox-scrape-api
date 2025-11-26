@@ -1,11 +1,8 @@
 import re
-from asyncio import timeout
 from datetime import datetime, timedelta
-from os import name
-from typing import Any
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import Locator, Page
+from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PWTimeoutError
 from playwright.async_api import expect
 
@@ -58,7 +55,7 @@ async def pick_date_n_days_ahead(page: Page, days_ahead: int):
 
 async def create_so(page: Page, order: SalesOrder):
     STORE_RETRIES = 5
-    ITEM_RETRIES = 3
+    ITEM_RETRIES = 2
 
     for retry in range(STORE_RETRIES):
         try:
@@ -88,7 +85,7 @@ async def create_so(page: Page, order: SalesOrder):
     await page.get_by_test_id("title-input").click()
 
     await page.get_by_test_id("title-input").press_sequentially(
-        "TEST" + order.order_name, delay=PRESS_SEQUENTIALLY_DELAY
+        "TEST " + order.order_name, delay=PRESS_SEQUENTIALLY_DELAY
     )
 
     await page.locator(
@@ -110,12 +107,9 @@ async def create_so(page: Page, order: SalesOrder):
 
     # Process each item with retry mechanism
     for index, item in enumerate(order.items):
-        item_added = False
-
         for item_retry in range(ITEM_RETRIES):
             try:
                 await process_line_item(page, index, item)
-                item_added = True
                 break
             except Exception as e:
                 if item_retry == ITEM_RETRIES - 1:
@@ -259,8 +253,12 @@ async def process_line_item(page: Page, index: int, item):
     await page.wait_for_timeout(5000)
     if is_custom:
         await page.locator(
+            "input[id='apparel.items[0].partNumber-input']"
+        ).press_sequentially(item.style, delay=PRESS_SEQUENTIALLY_DELAY)
+        await page.locator(
             "input[id='apparel.items[0].color-input']"
         ).press_sequentially(item.color, delay=PRESS_SEQUENTIALLY_DELAY)
+
     else:
         await page.locator(
             '[id="apparel.items[0].color-field-wrapper"] > .field-wrapper-container > .f.f-alignItems-c > .f-grow-1 > .css-nxiuxh-container > .css-8rytzr-control > .css-1fc4u07 > .css-cy4hh4'
@@ -302,19 +300,49 @@ async def process_line_item(page: Page, index: int, item):
     sizes_container = page.locator("div._apparelItemSizes_tgx96_1").nth(index)
     await expect(sizes_container).to_be_visible()
     normalized_size = _normalize_size(item.size)
-    row = sizes_container.locator(
+
+    col = sizes_container.locator(
         f"div.PricingTemplateApparelItemsItemSizesSize:has(div._apparelItemSizesPricingLabel_tgx96_30:text-is('{normalized_size}'))"
     ).first
-    await expect(row).to_be_visible()
-    qty_input = row.locator("input[id$='.quantity-input']").first
-    await expect(qty_input).to_be_visible()
+    try:
+        await expect(col).to_be_visible(timeout=2000)
+        # If found, use the standard size input
+        qty_input = col.locator("input[id$='.quantity-input']").first
+        await expect(qty_input).to_be_visible()
+        await qty_input.fill("")
+        await qty_input.press_sequentially(
+            item.quantity, delay=PRESS_SEQUENTIALLY_DELAY
+        )
+    except:
+        # If not found, use the custom/odd size input
+        odd_size_input = page.locator(
+            f"input#apparel\\.items\\[{index}\\]\\.oddSize\\.size-input"
+        )
+        await expect(odd_size_input).to_be_visible()
+        await odd_size_input.fill("")
+        await odd_size_input.press_sequentially(
+            _normalize_size(item.size), delay=PRESS_SEQUENTIALLY_DELAY
+        )
 
-    await qty_input.fill("")
-    await qty_input.press_sequentially(item.quantity, delay=PRESS_SEQUENTIALLY_DELAY)
+        # Wait for quantity input to become enabled after size is filled
+        qty_input = page.locator(
+            f"input#apparel\\.items\\[{index}\\]\\.oddSize\\.quantity-input"
+        )
+        await expect(qty_input).to_be_enabled()
+        await qty_input.fill("")
+        await qty_input.press_sequentially(
+            item.quantity, delay=PRESS_SEQUENTIALLY_DELAY
+        )
+
+        # Update col to point to the parent container div for the cost input
+        col = page.locator(
+            f"div.PricingTemplateApparelItemsItemSizesSize:has(input#apparel\\.items\\[{index}\\]\\.oddSize\\.size-input)"
+        )
 
     if is_custom:
-        cost_input = row.locator("input[id$='.costInDollars-input']").first
-        await expect(cost_input).to_be_visible()
+        cost_input = col.locator("input[id$='.costInDollars-input']").first
+        await expect(cost_input).to_be_enabled()
+        await cost_input.fill("")
         await cost_input.press_sequentially(item.price, delay=PRESS_SEQUENTIALLY_DELAY)
 
     await page.wait_for_timeout(200)

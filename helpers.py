@@ -69,6 +69,7 @@ def _normalize_size(size: str) -> str:
     if not size:
         return "OTHER"
     s = size.strip().lower()
+
     # Quick check for single-letter sizes BEFORE any processing
     if s in {
         "xs",
@@ -102,10 +103,10 @@ def _normalize_size(size: str) -> str:
     # Normalize separators & spaces
     s = re.sub(r"[._\-\/]+", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
+
     # Check if string is empty after normalization
     if not s:
         return "OTHER"
-
     # CHECK NUMBERED XL PATTERNS FIRST (before any word replacements)
     # Patterns like "2xl", "3 xl", "4x large"
     m = re.search(r"\b(\d+)\s*x\s*l(arge)?\b", s)  # 2 x l, 2 x large
@@ -114,30 +115,30 @@ def _normalize_size(size: str) -> str:
     m = re.search(r"\b(\d+)\s*xl\b", s)  # 2xl
     if m:
         return f"{int(m.group(1))}XL"
-
     # Patterns like "xxl", "xxxl", "xxxxl"
     m = re.search(r"\b(x{2,})\s*l\b", s)  # xx l, xxx l
     if m:
         n = len(m.group(1))
         return f"{n}XL" if n >= 2 else "XL"
-
     # NOW do word replacements (but ONLY extra small/large, not plain large)
     s = re.sub(r"\bextra\s*small\b", "xs", s)
     s = re.sub(r"\bextra\s*large\b", "xl", s)
     s = re.sub(r"\bmedium\b", "m", s)
+
     # Don't replace plain "small" or "large" - handle them separately below
 
-    # Single X large variants: "x l", "x-large", "xlarge"
-    if re.search(r"\bx\s*l\b|\bx-?large\b|\bxlarge\b", s):
+    # Single X large variants: "x l", "x large", "x-large", "xlarge" - CHECK THIS BEFORE PLAIN L!
+    # Note: Need to check for "x large" (with space) because separators are normalized to spaces
+    if re.search(r"\bx\s+(l\b|large\b)|\bxlarge\b", s):
         return "XL"
 
-    # XS variants: "xsmall", "x-small", "xs"
-    if re.search(r"\bxxs\b|\bxx-small\b|\bextra\s*extra\s*small\b", s):
+    # XS variants: "xsmall", "x-small", "xs", "x small"
+    if re.search(r"\bxxs\b|\bxx\s*small\b|\bextra\s*extra\s*small\b", s):
         return "XS"
-    if re.search(r"\bxs\b|\bx-?small\b|\bxsmall\b", s):
+    if re.search(r"\bxs\b|\bx\s*small\b|\bxsmall\b", s):
         return "XS"
 
-    # Plain S / M / L (check for words too)
+    # Plain S / M / L (check for words too) - CHECK THESE AFTER X-LARGE
     if re.search(r"\bs\b(?![a-z])|\bsmall\b", s):
         return "S"
     if re.search(r"\bm\b(?![a-z])|\bmedium\b|^md\b", s):
@@ -148,7 +149,6 @@ def _normalize_size(size: str) -> str:
     # If it's exactly an XL token after normalization
     if re.fullmatch(r"xl", s):
         return "XL"
-
     # Sometimes strings end with the size token (e.g., "mens 2x-large")
     words = s.split()
     if not words:
@@ -170,6 +170,7 @@ def _normalize_size(size: str) -> str:
 # Test cases
 test_cases = [
     "Womens Large",
+    "Womens X-Large",
     "Mens 2X-Large",
     "Extra Large",
     "2XL",
@@ -179,6 +180,8 @@ test_cases = [
     "Womens X-Large",
     "X-Large",
     "OSFA",
+    "One size fits all",
+    "Adult One Size Fits All",
 ]
 
 print("Test Results:")

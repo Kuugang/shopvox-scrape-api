@@ -62,6 +62,7 @@ async def login(page: Page):
 
     await page.get_by_role("button", name="Login", exact=True).click()
 
+    await page.wait_for_timeout(10_000)
     await page.wait_for_load_state("load")
     await _close_page(page)
 
