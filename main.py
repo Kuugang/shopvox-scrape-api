@@ -4,12 +4,20 @@ import re
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, List,
-                    Optional, Tuple, Union)
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from dotenv import load_dotenv
-from fastapi import (BackgroundTasks, Body, Depends, FastAPI, HTTPException,
-                     Query)
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from playwright._impl._errors import TargetClosedError
 from playwright.async_api import BrowserContext
@@ -772,10 +780,17 @@ async def fetch_overdue_jobs() -> Union[str, dict]:
     # page.on("popup", lambda p: asyncio.create_task(p.close()))
 
     try:
-
-        await page.goto(URL_SHOPVOX + "/jobs?view=f60b58c5-eb32-461b-9fed-05d6ac6d9ce3")
+        await page.goto(URL_SHOPVOX + "/jobs?view=24a9b65f-9d93-4cb6-96fc-92fd5c4a13ef")
         await page.locator("span:has-text('Jobs')").wait_for(state="visible")
-        await page.wait_for_timeout(10000)
+        await page.wait_for_timeout(10_000)
+
+        await page.get_by_role("button", name="2").click()
+        await page.locator(
+            ".f.f-alignItems-c.f-justifyContent-c.width-32px > .f-shrink-0"
+        ).click()
+        await page.get_by_role("button", name="Today").click()
+        await page.get_by_role("button", name="Filter Now").click()
+        await page.wait_for_timeout(5_000)
 
         rows_count_text = await page.locator("p.css-ifbqr7").inner_text()
         m = re.search(r"(\d[\d,]*)", rows_count_text)
