@@ -1,3 +1,2 @@
-2025/11/29-00:31:13.999 1d097 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/MANIFEST-000001
-2025/11/29-00:31:14.000 1d097 Recovering log #30
-2025/11/29-00:31:14.001 1d097 Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/000030.log 
+2025/12/02-03:19:20.079 1075a2 Creating DB /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage since it was missing.
+2025/12/02-03:19:20.083 1075a2 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Session Storage/MANIFEST-000001

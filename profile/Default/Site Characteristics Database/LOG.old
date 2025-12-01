@@ -1,3 +1,2 @@
-2025/11/29-00:31:10.594 1d085 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Site Characteristics Database/MANIFEST-000001
-2025/11/29-00:31:10.594 1d085 Recovering log #3
-2025/11/29-00:31:10.595 1d085 Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Site Characteristics Database/000003.log 
+2025/12/02-03:19:20.007 10759c Creating DB /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Site Characteristics Database since it was missing.
+2025/12/02-03:19:20.010 10759c Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Site Characteristics Database/MANIFEST-000001

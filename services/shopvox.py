@@ -56,6 +56,7 @@ async def pick_date_n_days_ahead(page: Page, days_ahead: int):
 async def create_so(page: Page, order: SalesOrder):
     STORE_RETRIES = 5
     ITEM_RETRIES = 2
+    custom_items = []
 
     for retry in range(STORE_RETRIES):
         try:
@@ -109,15 +110,23 @@ async def create_so(page: Page, order: SalesOrder):
     for index, item in enumerate(order.items):
         for item_retry in range(ITEM_RETRIES):
             try:
-                await process_line_item(page, index, item)
+                is_custom = await process_line_item(page, index, item)
+                if is_custom:
+                    custom_items.append({
+                        "name": item.name,
+                        "color": item.color,
+                        "size": item.size,
+                        "style": item.style,
+                        "quantity": item.quantity,
+                        "price": item.price,
+                        "total": item.total,
+                    })
                 break
             except Exception as e:
                 if item_retry == ITEM_RETRIES - 1:
                     raise RuntimeError(
                         f"Failed to add item {index} after {ITEM_RETRIES} retries: {str(e)}"
                     )
-
-                # Log retry attempt
                 print(
                     f"Retry {item_retry + 1}/{ITEM_RETRIES} for item {index}: {str(e)}"
                 )
@@ -131,39 +140,39 @@ async def create_so(page: Page, order: SalesOrder):
 
                 continue
 
-    # Add not order yet tag
-    await page.wait_for_timeout(200)
-    await page.get_by_role("button", name="Add Tag").click()
-    await page.get_by_role("combobox", name="Tags").press_sequentially(
-        "NOT ORDER YET", delay=PRESS_SEQUENTIALLY_DELAY
-    )
-    await page.wait_for_timeout(200)
-    await page.locator("div").filter(has_text=re.compile(r"^NOT ORDER YET$")).nth(
-        1
-    ).click()
-    await page.wait_for_timeout(200)
+    # # Add not order yet tag
+    # await page.wait_for_timeout(200)
+    # await page.get_by_role("button", name="Add Tag").click()
+    # await page.get_by_role("combobox", name="Tags").press_sequentially(
+    #     "NOT ORDER YET", delay=PRESS_SEQUENTIALLY_DELAY
+    # )
+    # await page.wait_for_timeout(200)
+    # await page.locator("div").filter(has_text=re.compile(r"^NOT ORDER YET$")).nth(
+    #     1
+    # ).click()
+    # await page.wait_for_timeout(200)
+    #
+    # modal = page.locator("#root-modals-dropdowns [role='dialog']").first
+    # await modal.wait_for(state="visible", timeout=10_000)
+    #
+    # submit_btn = modal.locator("button.ml4.css-12lhddq").first
+    # if await submit_btn.count() == 0:
+    #     submit_btn = modal.locator("button[type='submit']").first
+    # await submit_btn.wait_for(state="visible", timeout=10_000)
+    # await submit_btn.click()
+    # await page.wait_for_timeout(5_000)
 
-    modal = page.locator("#root-modals-dropdowns [role='dialog']").first
-    await modal.wait_for(state="visible", timeout=10_000)
-
-    submit_btn = modal.locator("button.ml4.css-12lhddq").first
-    if await submit_btn.count() == 0:
-        submit_btn = modal.locator("button[type='submit']").first
-    await submit_btn.wait_for(state="visible", timeout=10_000)
-    await submit_btn.click()
-    await page.wait_for_timeout(5_000)
+    return custom_items
 
 
 async def process_line_item(page: Page, index: int, item):
     """Process a single line item with all its steps"""
-
     new_line_item_button = page.locator("button.css-gjgr8x")
     await new_line_item_button.wait_for(state="visible")
     await page.wait_for_timeout(200)
     await new_line_item_button.click()
     create_line_item_button = page.locator("button.css-1f4m2s7")
     await create_line_item_button.wait_for(state="visible")
-
     product_input = page.locator("#productId-input")
     await product_input.press_sequentially("APPAREL", delay=PRESS_SEQUENTIALLY_DELAY)
     await page.wait_for_timeout(200)
@@ -173,7 +182,6 @@ async def process_line_item(page: Page, index: int, item):
     await expect(apparel_option).to_be_visible(timeout=10_000)
     await page.wait_for_timeout(200)
     await apparel_option.click()
-
     await page.wait_for_timeout(200)
     await page.get_by_test_id("name-input").click()
     await page.get_by_test_id("name-input").press("ControlOrMeta+a")
@@ -199,7 +207,6 @@ async def process_line_item(page: Page, index: int, item):
 
     for cat_index, cat in enumerate(catalogs):
         is_custom = cat == "Custom"
-
         await page.wait_for_timeout(200)
         if cat_index >= 1:
             await catalog_dropdown.click()
@@ -209,11 +216,14 @@ async def process_line_item(page: Page, index: int, item):
             await page.locator(
                 'input[id="apparel.items[0].productName-input"]'
             ).press_sequentially(item.name, delay=PRESS_SEQUENTIALLY_DELAY)
-            continue
+            # For custom, skip the product search and go straight to color
+            break
 
         style_to_match = item.style or item.name
         pattern = rf"\b{re.escape(style_to_match)}\b"
 
+        # Try to find product in this catalog
+        product_found = False
         for attempt in range(2):
             try:
                 await page.wait_for_timeout(200)
@@ -222,7 +232,6 @@ async def process_line_item(page: Page, index: int, item):
                 await product_input.press_sequentially(
                     style_to_match, delay=PRESS_SEQUENTIALLY_DELAY
                 )
-
                 await page.get_by_role("listbox").wait_for(
                     state="visible", timeout=2_000
                 )
@@ -231,72 +240,134 @@ async def process_line_item(page: Page, index: int, item):
                     .filter(has_text=re.compile(pattern))
                     .first
                 )
-
                 await option.wait_for(state="visible", timeout=10_000)
                 await option.click()
-
-                found = True
+                product_found = True
                 break
             except PWTimeoutError:
                 if attempt == 2 - 1:
                     break
-
                 try:
                     await page.keyboard.press("Escape")
                 except Exception:
                     pass
 
-        if found:
+        # If product not found in this catalog, try next catalog
+        if not product_found:
+            continue
+
+        # Product found, now try to find color
+        await page.wait_for_timeout(5000)
+
+        try:
+            await page.locator(
+                '[id="apparel.items[0].color-field-wrapper"] > .field-wrapper-container > .f.f-alignItems-c > .f-grow-1 > .css-nxiuxh-container > .css-8rytzr-control > .css-1fc4u07 > .css-cy4hh4'
+            ).click(timeout=60_000)
+            await page.wait_for_timeout(1000)
+            await page.locator("div.css-hvcirc-control").wait_for(
+                state="visible", timeout=60_000
+            )
+
+            color = item.color
+            if "/" in color:
+                left, right = color.split("/", 1)
+                color = f"{left.rstrip()}/ {right.lstrip()}"
+
+            color_found = False
+            for retry in range(3):
+                await page.wait_for_timeout(1000)
+                try:
+                    await page.get_by_role("combobox", name="* Color").fill("")
+                    await page.get_by_role(
+                        "combobox", name="* Color"
+                    ).press_sequentially(color, delay=PRESS_SEQUENTIALLY_DELAY)
+                    await page.wait_for_timeout(200)
+
+                    color_option = page.get_by_role("option", name=color, exact=True)
+                    await color_option.wait_for(state="visible", timeout=10_000)
+                    await color_option.click()
+
+                    color_found = True
+                    break
+                except PWTimeoutError:
+                    if retry == 3 - 1:
+                        break
+                    continue
+
+            # If color not found, try next catalog
+            if not color_found:
+                print(
+                    f"Color '{color}' not found in catalog '{cat}', trying next catalog..."
+                )
+                continue
+
+            # Color found, now check if size is available
+            # Wait for size container to load
+            await page.locator("span.f-shrink-0.css-nk0bb7:has-text('Copy Style')").wait_for(
+                state="visible", timeout=30_000
+            )
+            
+            sizes_container = page.locator("div._apparelItemSizes_tgx96_1").nth(index)
+            await expect(sizes_container).to_be_visible(timeout=10_000)
+            normalized_size = _normalize_size(item.size)
+
+            # Check if the size exists in the standard size inputs
+            col = sizes_container.locator(
+                f"div.PricingTemplateApparelItemsItemSizesSize:has(div._apparelItemSizesPricingLabel_tgx96_30:text-is('{normalized_size}'))"
+            ).first
+            
+            size_found = False
+            try:
+                await expect(col).to_be_visible(timeout=2000)
+                size_found = True
+            except:
+                # Check if odd size input is available (for sizes not in standard list)
+                odd_size_input = page.locator(
+                    f"input#apparel\\.items\\[{index}\\]\\.oddSize\\.size-input"
+                )
+                try:
+                    await expect(odd_size_input).to_be_visible(timeout=2000)
+                    size_found = True  # We can use odd size input
+                except:
+                    size_found = False
+
+            if not size_found:
+                print(
+                    f"Size '{normalized_size}' not found in catalog '{cat}', trying next catalog..."
+                )
+                continue
+
+            # Product, color, and size all found - we're done with catalog selection
+            found = True
             break
 
-    # Color
-    await page.wait_for_timeout(5000)
+        except Exception as e:
+            # Error during color/size selection, try next catalog
+            print(
+                f"Error finding color/size in catalog '{cat}': {e}, trying next catalog..."
+            )
+            continue
+
+    # If we exhausted all catalogs and still haven't found it, raise error
+    if not found and not is_custom:
+        raise RuntimeError("Product/Color/Size not found in any catalog")
+
+    # Handle custom catalog color/style input
     if is_custom:
+        await page.wait_for_timeout(5000)
         await page.locator(
             "input[id='apparel.items[0].partNumber-input']"
         ).press_sequentially(item.style, delay=PRESS_SEQUENTIALLY_DELAY)
         await page.locator(
             "input[id='apparel.items[0].color-input']"
         ).press_sequentially(item.color, delay=PRESS_SEQUENTIALLY_DELAY)
-
-    else:
-        await page.locator(
-            '[id="apparel.items[0].color-field-wrapper"] > .field-wrapper-container > .f.f-alignItems-c > .f-grow-1 > .css-nxiuxh-container > .css-8rytzr-control > .css-1fc4u07 > .css-cy4hh4'
-        ).click(timeout=60_000)
-
-        await page.wait_for_timeout(1000)
-        await page.locator("div.css-hvcirc-control").wait_for(
-            state="visible", timeout=60_000
+        
+        # Wait for load for custom items
+        await page.locator("span.f-shrink-0.css-nk0bb7:has-text('Copy Style')").wait_for(
+            state="visible"
         )
 
-        color = item.color
-        if "/" in color:
-            left, right = color.split("/", 1)
-            color = f"{left.rstrip()}/ {right.lstrip()}"
-
-        for retry in range(3):
-            await page.wait_for_timeout(1000)
-            try:
-                await page.get_by_role("combobox", name="* Color").fill("")
-                await page.get_by_role("combobox", name="* Color").press_sequentially(
-                    color, delay=PRESS_SEQUENTIALLY_DELAY
-                )
-
-                await page.wait_for_timeout(200)
-                await page.get_by_role("option", name=color, exact=True).click()
-                break
-
-            except PWTimeoutError:
-                if retry == 3 - 1:
-                    raise RuntimeError("Color not found")
-                continue
-
-    # Wait for load
-    await page.locator("span.f-shrink-0.css-nk0bb7:has-text('Copy Style')").wait_for(
-        state="visible"
-    )
-
-    # Size input
+    # Size input (at this point we know the size exists or we're using custom)
     sizes_container = page.locator("div._apparelItemSizes_tgx96_1").nth(index)
     await expect(sizes_container).to_be_visible()
     normalized_size = _normalize_size(item.size)
@@ -323,7 +394,6 @@ async def process_line_item(page: Page, index: int, item):
         await odd_size_input.press_sequentially(
             _normalize_size(item.size), delay=PRESS_SEQUENTIALLY_DELAY
         )
-
         # Wait for quantity input to become enabled after size is filled
         qty_input = page.locator(
             f"input#apparel\\.items\\[{index}\\]\\.oddSize\\.quantity-input"
@@ -333,7 +403,6 @@ async def process_line_item(page: Page, index: int, item):
         await qty_input.press_sequentially(
             item.quantity, delay=PRESS_SEQUENTIALLY_DELAY
         )
-
         # Update col to point to the parent container div for the cost input
         col = page.locator(
             f"div.PricingTemplateApparelItemsItemSizesSize:has(input#apparel\\.items\\[{index}\\]\\.oddSize\\.size-input)"
@@ -350,3 +419,5 @@ async def process_line_item(page: Page, index: int, item):
     await page.locator(
         f"p.fontWeight-b.f-shrink-0.css-i7pnfr:has-text('{index}')"
     ).wait_for(state="visible")
+
+    return is_custom

@@ -4,20 +4,12 @@ import re
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import (
-    Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, List,
+                    Optional, Tuple, Union)
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Query
+from fastapi import (BackgroundTasks, Body, Depends, FastAPI, HTTPException,
+                     Query)
 from fastapi.responses import FileResponse, JSONResponse
 from playwright._impl._errors import TargetClosedError
 from playwright.async_api import BrowserContext
@@ -156,6 +148,65 @@ CHROME_UA = (
     "Chrome/131.0.0.0 Safari/537.36"
 )
 
+# Anti-bot detection stealth script
+STEALTH_JS = """
+() => {
+    // Override navigator.webdriver
+    Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+    });
+
+    // Override navigator.plugins to have realistic plugins
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => [
+            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+            { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+        ],
+    });
+
+    // Override navigator.languages
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en'],
+    });
+
+    // Override permissions query
+    const originalQuery = window.navigator.permissions.query;
+    window.navigator.permissions.query = (parameters) => (
+        parameters.name === 'notifications' ?
+            Promise.resolve({ state: Notification.permission }) :
+            originalQuery(parameters)
+    );
+
+    // Remove automation-related properties from window
+    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+    // Override chrome runtime
+    window.chrome = {
+        runtime: {},
+        loadTimes: function() {},
+        csi: function() {},
+        app: {},
+    };
+
+    // Fix iframe contentWindow access
+    const originalContentWindow = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+        get: function() {
+            const result = originalContentWindow.get.call(this);
+            if (result) {
+                try {
+                    Object.defineProperty(result.navigator, 'webdriver', { get: () => undefined });
+                } catch (e) {}
+            }
+            return result;
+        }
+    });
+}
+"""
+
 
 async def _init_playwright_and_context():
     global _pw, _ctx
@@ -166,16 +217,26 @@ async def _init_playwright_and_context():
             _ctx = await _pw.chromium.launch_persistent_context(
                 user_data_dir=USER_DATA_DIR,
                 headless=HEADLESS,
-                # args=[
-                #     "--no-sandbox",
-                #     "--disable-dev-shm-usage",
-                # ],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--disable-background-timer-throttling",
+                    "--disable-popup-blocking",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-renderer-backgrounding",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-extensions",
+                ],
+                ignore_default_args=["--enable-automation"],
                 channel="chrome",
                 viewport={"width": 1366, "height": 900},
                 locale="en-US",
                 timezone_id="America/Chicago",
                 user_agent=CHROME_UA,
             )
+            # Add stealth script to run on every new page
+            await _ctx.add_init_script(STEALTH_JS)
 
 
 async def _shutdown_playwright():
@@ -1273,30 +1334,71 @@ async def update_omg_orders(
 
 @app.post("/shopvox/so/new")
 async def omg_orders_to_shopvox(orders: List[schemas2.SalesOrder]):
-
     ctx = await get_ctx()
-
     semaphore = asyncio.Semaphore(10)
-
+    results = []
+    
     async def process_order(order: schemas2.SalesOrder):
         async with semaphore:
             page = await ctx.new_page()
+            result = {
+                "success": False,
+                "order": order,
+                "error": None,
+                "custom_items": []
+            }
+            
             try:
-                await shopvox.create_so(page, order)
-                print(
-                    f"Successfully processed order: {order.id if hasattr(order, 'id') else 'unknown'}"
-                )
+                custom_items = await shopvox.create_so(page, order)
+                result["success"] = True
+                result["custom_items"] = custom_items
+                print(f"Successfully processed order: {order.id if hasattr(order, 'id') else 'unknown'} (custom_items: {len(custom_items)})")
+            except RuntimeError as e:
+                error_msg = str(e).lower()
+                if "color not found" in error_msg:
+                    result["error"] = "color_not_found"
+                elif "size not found" in error_msg:
+                    result["error"] = "size_not_found"
+                else:
+                    result["error"] = str(e)
+                print(f"Error processing order: {e}")
             except Exception as e:
+                result["error"] = str(e)
                 print(f"Error processing order: {e}")
             finally:
                 await page.close()
-
+                results.append(result)
+    
     tasks = [process_order(order) for order in orders]
-
     await asyncio.gather(*tasks, return_exceptions=True)
-
-    return {"status": "completed", "total_orders": len(orders)}
-
+    
+    # Build successful orders with custom items info
+    successful_orders = [
+        {
+            "order_id": r["order"].id if hasattr(r["order"], 'id') else None,
+            "order_name": r["order"].order_name if hasattr(r["order"], 'order_name') else None,
+            "store_name": r["order"].store_name if hasattr(r["order"], 'store_name') else None,
+            "items_count": len(r["order"].items) if hasattr(r["order"], 'items') else 0,
+            "custom_items": r["custom_items"]
+        }
+        for r in results 
+        if r["success"] and not r["error"]
+    ]
+    
+    # Filter orders without custom items (for backward compatibility)
+    orders_without_custom = [o for o in successful_orders if len(o["custom_items"]) == 0]
+    
+    # Filter orders with custom items
+    orders_with_custom = [o for o in successful_orders if len(o["custom_items"]) > 0]
+    
+    return {
+        "status": "completed",
+        "total_orders": len(orders),
+        "successful_orders": successful_orders,
+        "successful_count": len(successful_orders),
+        "orders_without_custom": orders_without_custom,
+        "orders_with_custom": orders_with_custom
+    }
 
 @app.get("/")
 async def hello():

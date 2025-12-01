@@ -1,3 +1,2 @@
-2025/11/29-00:31:10.599 1d097 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/MANIFEST-000001
-2025/11/29-00:31:10.604 1d097 Recovering log #77
-2025/11/29-00:31:10.605 1d097 Reusing old log /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/000077.log 
+2025/12/02-03:19:20.010 1075a2 Creating DB /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb since it was missing.
+2025/12/02-03:19:20.019 1075a2 Reusing MANIFEST /home/kuugang/Desktop/projects/bcapparel/shopvox_automate_api/profile/Default/Local Storage/leveldb/MANIFEST-000001
