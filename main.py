@@ -1379,7 +1379,9 @@ async def omg_orders_to_shopvox(orders: List[schemas2.SalesOrder]):
             "order_name": r["order"].order_name if hasattr(r["order"], 'order_name') else None,
             "store_name": r["order"].store_name if hasattr(r["order"], 'store_name') else None,
             "items_count": len(r["order"].items) if hasattr(r["order"], 'items') else 0,
-            "custom_items": r["custom_items"]
+            # 'items' holds per-item metadata (is_custom, catalog, error). Keep 'custom_items' for backward compatibility.
+            "items": r["custom_items"],
+            "custom_items": [i for i in (r["custom_items"] or []) if i.get("is_custom")]
         }
         for r in results 
         if r["success"] and not r["error"]

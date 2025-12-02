@@ -56,7 +56,10 @@ async def pick_date_n_days_ahead(page: Page, days_ahead: int):
 async def create_so(page: Page, order: SalesOrder):
     STORE_RETRIES = 5
     ITEM_RETRIES = 2
-    custom_items = []
+    # items_result will contain a dict per input item with metadata about
+    # whether it was added using a catalog, whether it was custom, any error,
+    # and which catalog was used.
+    items_result: list[dict] = []
 
     for retry in range(STORE_RETRIES):
         try:
@@ -86,7 +89,7 @@ async def create_so(page: Page, order: SalesOrder):
     await page.get_by_test_id("title-input").click()
 
     await page.get_by_test_id("title-input").press_sequentially(
-        "TEST " + order.order_name, delay=PRESS_SEQUENTIALLY_DELAY
+        order.order_name, delay=PRESS_SEQUENTIALLY_DELAY
     )
 
     await page.locator(
@@ -106,13 +109,15 @@ async def create_so(page: Page, order: SalesOrder):
     await page.wait_for_load_state("load")
     await page.locator("p.css-fqwlf2:has-text('Customer')").wait_for(state="visible")
 
-    # Process each item with retry mechanism
+    # Process each item with retry mechanism and collect per-item results
     for index, item in enumerate(order.items):
+        last_error = None
         for item_retry in range(ITEM_RETRIES):
             try:
-                is_custom = await process_line_item(page, index, item)
-                if is_custom:
-                    custom_items.append({
+                # process_line_item returns (is_custom: bool, catalog: str|None)
+                is_custom, catalog_used = await process_line_item(page, index, item)
+                items_result.append(
+                    {
                         "name": item.name,
                         "color": item.color,
                         "size": item.size,
@@ -120,10 +125,31 @@ async def create_so(page: Page, order: SalesOrder):
                         "quantity": item.quantity,
                         "price": item.price,
                         "total": item.total,
-                    })
+                        "is_custom": bool(is_custom),
+                        "catalog": catalog_used,
+                        "error": None,
+                    }
+                )
+                last_error = None
                 break
             except Exception as e:
+                last_error = str(e)
                 if item_retry == ITEM_RETRIES - 1:
+                    # record failure for this item
+                    items_result.append(
+                        {
+                            "name": item.name,
+                            "color": item.color,
+                            "size": item.size,
+                            "style": item.style,
+                            "quantity": item.quantity,
+                            "price": item.price,
+                            "total": item.total,
+                            "is_custom": False,
+                            "catalog": None,
+                            "error": f"Failed after {ITEM_RETRIES} retries: {last_error}",
+                        }
+                    )
                     raise RuntimeError(
                         f"Failed to add item {index} after {ITEM_RETRIES} retries: {str(e)}"
                     )
@@ -162,11 +188,10 @@ async def create_so(page: Page, order: SalesOrder):
     # await submit_btn.click()
     # await page.wait_for_timeout(5_000)
 
-    return custom_items
+    return items_result
 
 
 async def process_line_item(page: Page, index: int, item):
-    """Process a single line item with all its steps"""
     new_line_item_button = page.locator("button.css-gjgr8x")
     await new_line_item_button.wait_for(state="visible")
     await page.wait_for_timeout(200)
@@ -205,6 +230,7 @@ async def process_line_item(page: Page, index: int, item):
     is_custom = False
     cat_index = 0
 
+    selected_catalog = None
     for cat_index, cat in enumerate(catalogs):
         is_custom = cat == "Custom"
         await page.wait_for_timeout(200)
@@ -213,6 +239,7 @@ async def process_line_item(page: Page, index: int, item):
         await page.get_by_role("option", name=cat).click()
 
         if is_custom:
+            selected_catalog = "Custom"
             await page.locator(
                 'input[id="apparel.items[0].productName-input"]'
             ).press_sequentially(item.name, delay=PRESS_SEQUENTIALLY_DELAY)
@@ -303,10 +330,10 @@ async def process_line_item(page: Page, index: int, item):
 
             # Color found, now check if size is available
             # Wait for size container to load
-            await page.locator("span.f-shrink-0.css-nk0bb7:has-text('Copy Style')").wait_for(
-                state="visible", timeout=30_000
-            )
-            
+            await page.locator(
+                "span.f-shrink-0.css-nk0bb7:has-text('Copy Style')"
+            ).wait_for(state="visible", timeout=30_000)
+
             sizes_container = page.locator("div._apparelItemSizes_tgx96_1").nth(index)
             await expect(sizes_container).to_be_visible(timeout=10_000)
             normalized_size = _normalize_size(item.size)
@@ -315,7 +342,7 @@ async def process_line_item(page: Page, index: int, item):
             col = sizes_container.locator(
                 f"div.PricingTemplateApparelItemsItemSizesSize:has(div._apparelItemSizesPricingLabel_tgx96_30:text-is('{normalized_size}'))"
             ).first
-            
+
             size_found = False
             try:
                 await expect(col).to_be_visible(timeout=2000)
@@ -338,6 +365,7 @@ async def process_line_item(page: Page, index: int, item):
                 continue
 
             # Product, color, and size all found - we're done with catalog selection
+            selected_catalog = cat
             found = True
             break
 
@@ -361,11 +389,11 @@ async def process_line_item(page: Page, index: int, item):
         await page.locator(
             "input[id='apparel.items[0].color-input']"
         ).press_sequentially(item.color, delay=PRESS_SEQUENTIALLY_DELAY)
-        
+
         # Wait for load for custom items
-        await page.locator("span.f-shrink-0.css-nk0bb7:has-text('Copy Style')").wait_for(
-            state="visible"
-        )
+        await page.locator(
+            "span.f-shrink-0.css-nk0bb7:has-text('Copy Style')"
+        ).wait_for(state="visible")
 
     # Size input (at this point we know the size exists or we're using custom)
     sizes_container = page.locator("div._apparelItemSizes_tgx96_1").nth(index)
@@ -420,4 +448,4 @@ async def process_line_item(page: Page, index: int, item):
         f"p.fontWeight-b.f-shrink-0.css-i7pnfr:has-text('{index}')"
     ).wait_for(state="visible")
 
-    return is_custom
+    return is_custom, selected_catalog
