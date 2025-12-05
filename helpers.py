@@ -187,3 +187,71 @@ test_cases = [
 print("Test Results:")
 for test in test_cases:
     print(f"{test:20s} -> {_normalize_size(test)}")
+
+
+def _color_lookup(input_color, color_list):
+    """
+    Find the best matching color from a list using intelligent fuzzy matching.
+    Prioritizes matches that cover more of the input string.
+    
+    Args:
+        input_color: User input color (may have spaces removed, abbreviated, etc.)
+        color_list: List of valid color names from the catalog
+    
+    Returns:
+        Best matching color from the list, or original input if no match found
+    """
+    clean_input = input_color.lower().replace(" ", "")
+
+    best_match = None
+    best_score = 0
+    best_coverage = 0  # Track how much of input was matched
+
+    for color in color_list:
+        clean_color = color.lower().replace(" ", "")
+        score = 0
+        coverage = 0  # How many chars of input are covered by this match
+
+        # 1. Exact match (highest priority)
+        if clean_input == clean_color:
+            return color
+
+        # 2. Starts-with matching (good for truncated names)
+        if clean_color.startswith(clean_input):
+            # Input is a prefix of the color (e.g., "black" matches "blackheather")
+            score += 10
+            coverage = len(clean_input)
+        elif clean_input.startswith(clean_color):
+            # Color is a prefix of input (e.g., "forest" in "forestgrn")
+            score += 8
+            coverage = len(clean_color)
+
+        # 3. Substring match
+        if clean_input in clean_color or clean_color in clean_input:
+            score += 3
+            # For substring, estimate coverage as the longer of the two overlaps
+            if clean_input in clean_color:
+                coverage = max(coverage, len(clean_input))
+            else:
+                coverage = max(coverage, len(clean_color))
+
+        # 4. Prefix similarity (character-by-character) - only if no better match yet
+        if score == 0:
+            prefix_match = 0
+            min_len = min(len(clean_input), len(clean_color))
+            for i in range(min_len):
+                if clean_input[i] == clean_color[i]:
+                    prefix_match += 1
+                else:
+                    break
+
+            score = prefix_match
+            coverage = prefix_match
+
+        # Keep best match: prioritize coverage first, then score
+        if coverage > best_coverage or (coverage == best_coverage and score > best_score):
+            best_score = score
+            best_coverage = coverage
+            best_match = color
+
+    return best_match or input_color

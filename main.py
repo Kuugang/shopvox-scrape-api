@@ -1345,14 +1345,14 @@ async def omg_orders_to_shopvox(orders: List[schemas2.SalesOrder]):
                 "success": False,
                 "order": order,
                 "error": None,
-                "custom_items": []
+                "items": []
             }
             
             try:
-                custom_items = await shopvox.create_so(page, order)
+                items_result = await shopvox.create_so(page, order)
                 result["success"] = True
-                result["custom_items"] = custom_items
-                print(f"Successfully processed order: {order.id if hasattr(order, 'id') else 'unknown'} (custom_items: {len(custom_items)})")
+                result["items"] = items_result
+                print(f"Successfully processed order: {order.id if hasattr(order, 'id') else 'unknown'} (items: {len(items_result)})")
             except RuntimeError as e:
                 error_msg = str(e).lower()
                 if "color not found" in error_msg:
@@ -1372,34 +1372,27 @@ async def omg_orders_to_shopvox(orders: List[schemas2.SalesOrder]):
     tasks = [process_order(order) for order in orders]
     await asyncio.gather(*tasks, return_exceptions=True)
     
-    # Build successful orders with custom items info
+    # Build successful orders with per-item details
     successful_orders = [
         {
             "order_id": r["order"].id if hasattr(r["order"], 'id') else None,
             "order_name": r["order"].order_name if hasattr(r["order"], 'order_name') else None,
             "store_name": r["order"].store_name if hasattr(r["order"], 'store_name') else None,
             "items_count": len(r["order"].items) if hasattr(r["order"], 'items') else 0,
-            # 'items' holds per-item metadata (is_custom, catalog, error). Keep 'custom_items' for backward compatibility.
-            "items": r["custom_items"],
-            "custom_items": [i for i in (r["custom_items"] or []) if i.get("is_custom")]
+            "items": r["items"],
+            "has_custom": any(i.get("is_custom") for i in (r["items"] or []))
         }
         for r in results 
         if r["success"] and not r["error"]
     ]
-    
-    # Filter orders without custom items (for backward compatibility)
-    orders_without_custom = [o for o in successful_orders if len(o["custom_items"]) == 0]
-    
-    # Filter orders with custom items
-    orders_with_custom = [o for o in successful_orders if len(o["custom_items"]) > 0]
     
     return {
         "status": "completed",
         "total_orders": len(orders),
         "successful_orders": successful_orders,
         "successful_count": len(successful_orders),
-        "orders_without_custom": orders_without_custom,
-        "orders_with_custom": orders_with_custom
+        "custom_orders": [o for o in successful_orders if o["has_custom"]],
+        "standard_orders": [o for o in successful_orders if not o["has_custom"]]
     }
 
 @app.get("/")

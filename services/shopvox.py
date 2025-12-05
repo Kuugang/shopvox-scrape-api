@@ -6,8 +6,9 @@ from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PWTimeoutError
 from playwright.async_api import expect
 
-from helpers import _normalize_size, require_env
+from helpers import _color_lookup, _normalize_size, require_env
 from schemas2 import SalesOrder
+from services.shopvox_colors import get_catalog_colors
 
 BASE_URL = "https://express.shopvox.com/"
 NEW_SALES_ORDER = BASE_URL + "transactions/sales-orders/new"
@@ -91,6 +92,10 @@ async def create_so(page: Page, order: SalesOrder):
     await page.get_by_test_id("title-input").press_sequentially(
         order.order_name, delay=PRESS_SEQUENTIALLY_DELAY
     )
+
+    # await page.get_by_test_id("title-input").press_sequentially(
+    #     "TEST " + order.order_name, delay=PRESS_SEQUENTIALLY_DELAY
+    # )
 
     await page.locator(
         "#dueDate-field-wrapper > ._wrapper_caahe_1 > div > div > div > ._extras_caahe_75 > .f > .f-shrink-0"
@@ -295,10 +300,19 @@ async def process_line_item(page: Page, index: int, item):
                 state="visible", timeout=60_000
             )
 
-            color = item.color
-            if "/" in color:
-                left, right = color.split("/", 1)
-                color = f"{left.rstrip()}/ {right.lstrip()}"
+            # Lookup color in catalog's color list for better matching
+            catalog_colors = get_catalog_colors(cat)
+            if catalog_colors:
+                # Use color lookup to find the best match in the catalog
+                color_to_use = _color_lookup(item.color, catalog_colors)
+            else:
+                # For Custom or unknown catalogs, use the input color as-is
+                color_to_use = item.color
+
+            # Format color with space after slash if needed
+            if "/" in color_to_use:
+                left, right = color_to_use.split("/", 1)
+                color_to_use = f"{left.rstrip()}/ {right.lstrip()}"
 
             color_found = False
             for retry in range(3):
@@ -307,10 +321,12 @@ async def process_line_item(page: Page, index: int, item):
                     await page.get_by_role("combobox", name="* Color").fill("")
                     await page.get_by_role(
                         "combobox", name="* Color"
-                    ).press_sequentially(color, delay=PRESS_SEQUENTIALLY_DELAY)
+                    ).press_sequentially(color_to_use, delay=PRESS_SEQUENTIALLY_DELAY)
                     await page.wait_for_timeout(200)
 
-                    color_option = page.get_by_role("option", name=color, exact=True)
+                    color_option = page.get_by_role(
+                        "option", name=color_to_use, exact=True
+                    )
                     await color_option.wait_for(state="visible", timeout=10_000)
                     await color_option.click()
 
