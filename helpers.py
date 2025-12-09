@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Any, Dict, List, Mapping
+from typing import Any, List, Mapping
 
 from playwright.async_api import Error, Locator, Page
 
@@ -193,11 +193,11 @@ def _color_lookup(input_color, color_list):
     """
     Find the best matching color from a list using intelligent fuzzy matching.
     Prioritizes matches that cover more of the input string.
-    
+
     Args:
         input_color: User input color (may have spaces removed, abbreviated, etc.)
         color_list: List of valid color names from the catalog
-    
+
     Returns:
         Best matching color from the list, or original input if no match found
     """
@@ -249,7 +249,9 @@ def _color_lookup(input_color, color_list):
             coverage = prefix_match
 
         # Keep best match: prioritize coverage first, then score
-        if coverage > best_coverage or (coverage == best_coverage and score > best_score):
+        if coverage > best_coverage or (
+            coverage == best_coverage and score > best_score
+        ):
             best_score = score
             best_coverage = coverage
             best_match = color

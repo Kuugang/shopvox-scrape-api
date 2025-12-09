@@ -1,12 +1,13 @@
 import re
 from datetime import datetime, timedelta
+from typing import Any, Dict, List
 from zoneinfo import ZoneInfo
 
 from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PWTimeoutError
 from playwright.async_api import expect
 
-from helpers import _color_lookup, _normalize_size, require_env
+from helpers import _close_page, _color_lookup, _normalize_size, require_env
 from schemas2 import SalesOrder
 from services.shopvox_colors import get_catalog_colors
 
@@ -340,7 +341,7 @@ async def process_line_item(page: Page, index: int, item):
             # If color not found, try next catalog
             if not color_found:
                 print(
-                    f"Color '{color}' not found in catalog '{cat}', trying next catalog..."
+                    f"Color '{item.color}' not found in catalog '{cat}', trying next catalog..."
                 )
                 continue
 
@@ -465,3 +466,113 @@ async def process_line_item(page: Page, index: int, item):
     ).wait_for(state="visible")
 
     return is_custom, selected_catalog
+
+
+async def pick_ordered_and_submit(p: Page) -> None:
+    modal = p.locator("#root-modals-dropdowns [role='dialog']").first
+    await modal.wait_for(state="visible", timeout=10_000)
+
+    indicator = modal.locator(
+        ".css-1xb41ip-indicatorContainer, [class*='indicatorContainer']"
+    ).last
+    if await indicator.count() > 0:
+        await indicator.click()
+    else:
+        combo = modal.get_by_role("combobox").first
+        if await combo.count() > 0:
+            await combo.click()
+
+    listbox = p.locator(
+        "#react-select-2-listbox._options_y8hy2_13.intercom-target-select-field-options.css-uvrstl[role='listbox']"
+    )
+    if await listbox.count() == 0:
+        listbox = p.locator("[role='listbox'][id^='react-select-']")
+
+    await listbox.wait_for(state="attached", timeout=10_000)
+
+    try:
+        await listbox.scroll_into_view_if_needed()
+    except Exception:
+        pass
+    try:
+        await listbox.evaluate(
+            """
+        el => {
+          const getStyle = n => n && n.ownerDocument.defaultView.getComputedStyle(n);
+          let p = el.parentElement;
+          while (p) {
+            const s = getStyle(p);
+            if (s && (s.overflowY === 'auto' || s.overflowY === 'scroll')) {
+              p.scrollTop = 0;
+              p.scrollIntoView({ block: 'center' });
+              break;
+            }
+            p = p.parentElement;
+          }
+          el.scrollIntoView({ block: 'center' });
+        }
+        """
+        )
+    except Exception:
+        pass
+
+    submit_btn = modal.locator("button.ml4.css-12lhddq").first
+    if await submit_btn.count() == 0:
+        submit_btn = modal.locator("button[type='submit']").first
+    await submit_btn.wait_for(state="visible", timeout=10_000)
+    await submit_btn.click()
+    await p.wait_for_timeout(5_000)
+
+
+async def add_tags(page, tags):
+    for tag in tags:
+        try:
+            await page.get_by_role("combobox", name="Tags").fill(tag)
+            await page.locator("div").filter(has_text=re.compile(rf"^{tag}$")).nth(
+                1
+            ).click()
+        except:
+            continue
+
+
+async def remove_tags(page, tags):
+    for tag in tags:
+        try:
+            container = page.locator("div.css-1rdcdvo-multiValue", has_text=tag)
+            remove_button = container.locator("div[role='button']")
+            await remove_button.click()
+        except:
+            continue
+
+
+async def update_order_tag(order: Dict[str, Any], page: Page):
+    url = order.get("order_url")
+    if not url:
+        raise ValueError(f"Missing ORDER URL for order: {order}")
+    await page.goto(url, wait_until="domcontentloaded")
+    await page.wait_for_load_state("load")
+
+    try:
+        # Check if order has no tags yet
+        await page.locator("span.f-shrink-0.css-nk0bb7", has_text="Add Tag").wait_for(
+            timeout=10_000
+        )
+    except PWTimeoutError:
+        await page.locator("div._wrapper_p6s6a_1.cursor-p").nth(0).click()
+
+    to_add_tags = order.get("add", [])
+    to_remove_tags = order.get("remove", [])
+
+    await page.locator("._tooltip_p6s6a_5").click()
+
+    if len(to_add_tags) > 0:
+        await add_tags(page, to_add_tags)
+
+    if len(to_remove_tags) > 0:
+        await remove_tags(page, to_remove_tags)
+
+    # Save
+    await page.locator(".ml4.css-12lhddq").click()
+    # Wait to take effect
+    await page.wait_for_timeout(1_000)
+    await _close_page(page)

@@ -19,16 +19,17 @@ from playwright.async_api import Page, Playwright
 from playwright.async_api import TimeoutError as PWTimeout
 from playwright.async_api import async_playwright
 
-import s_and_s
 import schemas2
 from helpers import _close_page, _safe_remove, require_env
 from schemas import Item, JobFilters, JobFiltersModel, MfaBodyModel, SalesOrder
-from services import omg, sanmar, shopvox
+from services import omg, sanmar, shopvox, ss
 
 load_dotenv()
 
 URL_SANMAR = "https://sanmar.com"
 URL_SHOPVOX = "https://express.shopvox.com"
+
+
 
 SHOPVOX_EMAIL = require_env("SHOPVOX_EMAIL")
 SHOPVOX_PASSWORD = require_env("SHOPVOX_PASSWORD")
@@ -293,132 +294,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _shutdown_playwright()
 
 
-async def clean_not_order_yet_tags(
-    page: Page,
-    orders: List[str],
-    max_concurrency: int = 4,
-    goto_timeout_ms: int = 45_000,
-):
-
-    ctx = await get_ctx()
-    BADGE_TEXT = "NOT ORDER YET"
-
-    async def pick_ordered_and_submit(p: Page) -> None:
-        modal = p.locator("#root-modals-dropdowns [role='dialog']").first
-        await modal.wait_for(state="visible", timeout=10_000)
-
-        indicator = modal.locator(
-            ".css-1xb41ip-indicatorContainer, [class*='indicatorContainer']"
-        ).last
-        if await indicator.count() > 0:
-            await indicator.click()
-        else:
-            combo = modal.get_by_role("combobox").first
-            if await combo.count() > 0:
-                await combo.click()
-
-        listbox = p.locator(
-            "#react-select-2-listbox._options_y8hy2_13.intercom-target-select-field-options.css-uvrstl[role='listbox']"
-        )
-        if await listbox.count() == 0:
-            listbox = p.locator("[role='listbox'][id^='react-select-']")
-
-        await listbox.wait_for(state="attached", timeout=10_000)
-
-        try:
-            await listbox.scroll_into_view_if_needed()
-        except Exception:
-            pass
-        try:
-            await listbox.evaluate(
-                """
-            el => {
-              const getStyle = n => n && n.ownerDocument.defaultView.getComputedStyle(n);
-              let p = el.parentElement;
-              while (p) {
-                const s = getStyle(p);
-                if (s && (s.overflowY === 'auto' || s.overflowY === 'scroll')) {
-                  p.scrollTop = 0;
-                  p.scrollIntoView({ block: 'center' });
-                  break;
-                }
-                p = p.parentElement;
-              }
-              el.scrollIntoView({ block: 'center' });
-            }
-            """
-            )
-        except Exception:
-            pass
-
-        submit_btn = modal.locator("button.ml4.css-12lhddq").first
-        if await submit_btn.count() == 0:
-            submit_btn = modal.locator("button[type='submit']").first
-        await submit_btn.wait_for(state="visible", timeout=10_000)
-        await submit_btn.click()
-        await page.wait_for_timeout(5_000)
-
-    async def tag_cleanup_on_order_page(p: Page) -> None:
-        await page.wait_for_timeout(2000)
-        badge = p.locator(f"span:has-text('{BADGE_TEXT}')").first
-        await badge.wait_for(state="visible", timeout=10_000)
-        await badge.click()
-
-        modal = p.locator("#root-modals-dropdowns [role='dialog']").first
-        await modal.wait_for(state="visible", timeout=10_000)
-
-        remove_btn = modal.locator(
-            f".css-1rdcdvo-multiValue:has-text('{BADGE_TEXT}') [role='button'][aria-label^='Remove']"
-        ).first
-        if await remove_btn.count() == 0:
-            remove_btn = modal.locator(
-                f":is(div, span):has-text('{BADGE_TEXT}') >> [role='button'][aria-label^='Remove']"
-            ).first
-        if await remove_btn.count() == 0:
-            remove_btn = modal.locator("[role='button'][aria-label^='Remove']").first
-        if await remove_btn.count() > 0:
-            await remove_btn.click()
-
-        indicator = modal.locator(".css-1xb41ip-indicatorContainer").last
-        if await indicator.count() == 0:
-            indicator = modal.locator("[class*='indicatorContainer']").last
-        if await indicator.count() > 0:
-            await indicator.click()
-        else:
-            combo = modal.locator("[role='combobox']").first
-            if await combo.count() > 0:
-                await combo.click()
-
-        await pick_ordered_and_submit(p)
-
-    async def run_one(idx: int, order: str, sem: asyncio.Semaphore):
-        async with sem:
-            page = await ctx.new_page()
-            # page.on("popup", lambda p: asyncio.create_task(p.close()))
-            await page.goto(
-                order, wait_until="domcontentloaded", timeout=goto_timeout_ms
-            )
-            await page.wait_for_load_state("load")
-            await tag_cleanup_on_order_page(page)
-
-            await _close_page(page)
-
-    sem = asyncio.Semaphore(max_concurrency)
-    tasks = [asyncio.create_task(run_one(i, o, sem)) for i, o in enumerate(orders)]
-    await asyncio.gather(*tasks, return_exceptions=False)
 
 
 async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
     STORE_HOMES: Dict[str, Callable[[Page], Awaitable[None]]] = {
         "sanmar": sanmar.home,
-        "s&s activewear": s_and_s.home,
+        "s&s activewear": ss.home,
     }
 
     STORE_PROCESSORS: Dict[
         str, Callable[[Page, Item], Awaitable[Tuple[bool, List[str]]]]
     ] = {
         "sanmar": sanmar.process_item,
-        "s&s activewear": s_and_s.process_item,
+        "s&s activewear": ss.process_item,
     }
 
     ctx = await get_ctx()
@@ -444,9 +332,9 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
         await page.context.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
         processed_any = bool(processed_items)
         async with sem:
+            index = -1
             try:
-                for store_key, group in by_store.items():
-
+                for index, (store_key, group) in enumerate(by_store.items()):
                     processor = STORE_PROCESSORS.get(store_key)
                     home = STORE_HOMES.get(store_key)
 
@@ -473,18 +361,12 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
                                 any_added_overall = True
 
                             processed_items.append({"part": it.part, "color": it.color})
-
-            finally:
-                if page:
-                    await _close_page(page)
+            except:
+                if index > 0:
+                    await shopvox.update_order_tag({"order_url" : order.url, "remove": ["NOT ORDER YET"], "add": ["PARTIAL"]}, page)
 
         has_oos = bool(all_out_of_stock)
         has_custom = bool(skipped_custom)
-
-        # print("Processed Any: ", processed_any)
-        # print("Has Custom: ", has_custom)
-        # print("Has OOS: ", has_oos)
-        # print("Any Added Overall: ", any_added_overall)
 
         if not processed_any and has_custom:
             status = "custom_store_only"
@@ -493,15 +375,19 @@ async def add_to_cart(orders: List["SalesOrder"], max_concurrency: int = 3):
                 f"Skipped: {skipped_custom}"
             )
         elif has_oos and any_added_overall:
+            await shopvox.update_order_tag({"order_url" : order.url, "remove": ["NOT ORDER YET"], "add": ["PARTIAL"]}, page)
             status = "partial"
             base_msg = f"Some items were out of stock: {all_out_of_stock}"
         elif any_added_overall:
+            await shopvox.update_order_tag({"order_url" : order.url, "remove": ["NOT ORDER YET"]}, page)
             status = "success"
             base_msg = "All items added successfully"
         else:
             status = "no_items_added"
             base_msg = "No items were added to cart."
 
+        await _close_page(page)
+            
         return {
             "order_id": order.id,
             "url": order.url,
@@ -1192,7 +1078,7 @@ async def login_sanmar():
 async def login_ss():
     ctx = await get_ctx()
     page = await ctx.new_page()
-    await s_and_s.login(page)
+    await ss.login(page)
     await _close_page(page)
 
     return JSONResponse(
@@ -1208,7 +1094,7 @@ async def ss_accept_cookies():
 
     ctx = await get_ctx()
     page = await ctx.new_page()
-    await s_and_s.accept_cookies(page)
+    await ss.accept_cookies(page)
     await _close_page(page)
 
     return JSONResponse(
@@ -1232,14 +1118,25 @@ async def add_to_cart_r(orders: List[SalesOrder]):
     return JSONResponse(content={"result": result}, status_code=200)
 
 
-@app.post("/update-so-tag-ordered")
-async def update_so_tag(orders: List[str]):
-
+@app.patch("/shopvox-so-tag")
+async def update_shopvox_tag(orders: List[Dict[str, Any]]):
     ctx = await get_ctx()
-    page = await ctx.new_page()
 
-    await clean_not_order_yet_tags(page, orders)
-    return JSONResponse(content={"message": "Updated"}, status_code=200)
+    sem = asyncio.Semaphore(4)
+
+    async def process_order(order: Dict[str, Any]):
+        async with sem:
+            page = await ctx.new_page()
+            try:
+                await shopvox.update_order_tag(order, page)
+            finally:
+                await page.close()
+
+    tasks = [asyncio.create_task(process_order(order)) for order in orders]
+    await asyncio.gather(*tasks, return_exceptions=False)
+
+    return {"status": "done"}
+
 
 
 @app.get("/sanmar/orders/status")

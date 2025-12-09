@@ -8,15 +8,8 @@ from playwright.async_api import BrowserContext, Frame, Locator, Page
 from playwright.async_api import TimeoutError as PWTimeoutError
 from playwright.async_api import expect
 
-from helpers import (
-    _as_list,
-    _as_mapping,
-    _clean,
-    _click_and_wait_domcontent,
-    _close_page,
-    _safe_str,
-    require_env,
-)
+from helpers import (_as_list, _as_mapping, _clean, _click_and_wait_domcontent,
+                     _close_page, _safe_str, require_env)
 from schemas import Item, SizeItem
 
 load_dotenv()

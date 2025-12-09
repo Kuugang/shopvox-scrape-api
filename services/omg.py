@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 from urllib.parse import quote, urlencode
 
+from dotenv import load_dotenv
 from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PWTimeoutError
 from pydantic import BaseModel
@@ -11,6 +12,8 @@ from helpers import _close_page, require_env
 
 BASE_URL = "https://app.ordermygear.com/"
 ORDERS_URL = BASE_URL + "global/orders"
+load_dotenv()
+
 OMG_EMAIL = require_env("OMG_EMAIL")
 OMG_PASSWORD = require_env("OMG_PASSWORD")
 
