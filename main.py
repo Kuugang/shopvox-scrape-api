@@ -236,8 +236,24 @@ async def _init_playwright_and_context():
                 timezone_id="America/Chicago",
                 user_agent=CHROME_UA,
             )
-            # Add stealth script to run on every new page
-            await _ctx.add_init_script(STEALTH_JS)
+
+
+            # _ctx = await _pw.chromium.launch_persistent_context(
+            #     user_data_dir=USER_DATA_DIR,
+            #     headless=HEADLESS,
+            #     # args=[
+            #     #     "--no-sandbox",
+            #     #     "--disable-dev-shm-usage",
+            #     # ],
+            #     channel="chrome",
+            #     viewport={"width": 1366, "height": 900},
+            #     locale="en-US",
+            #     timezone_id="America/Chicago",
+            #     user_agent=CHROME_UA,
+            # )
+
+            # # Add stealth script to run on every new page
+            # await _ctx.add_init_script(STEALTH_JS)
 
 
 async def _shutdown_playwright():

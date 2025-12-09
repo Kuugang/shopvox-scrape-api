@@ -141,16 +141,13 @@ async def accept_cookies(page: Page):
     await page.goto(URL_S_AND_S)
     await page.wait_for_load_state("load")
 
-    html = await page.content()
-    print(html)
     await page.locator("button#onetrust-accept-btn-handler").click()
 
 
 async def login(page: Page):
-    await page.set_viewport_size({"width": 1366, "height": 900})
-    await page.context.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
-
     await page.goto(URL_S_AND_S + "/myaccount/login")
+
+    print(await page.content())
     await page.locator("input#M_M_zEmailTB").fill(S_AND_S_USERNAME)
     await page.locator("input#M_M_zPasswordTB").fill(S_AND_S_PASSWORD)
     await page.locator("input#M_M_zPageLoginBTN").click()
